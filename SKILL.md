@@ -16,7 +16,7 @@ tags: [security, skill-audit, prompt-injection, scan]
 | 修复 / 帮我改 | 对可自动修复的问题生成修复版 SKILL.md |
 | 这个是已知风险，忽略 | 将该条目加入本次白名单，重新评分 |
 | 批量检查 / 检查这个包里所有 Skill | 解压 zip → 逐个扫描 → 汇总报告 |
-| 帮我检查 [Skill marketplace URL] | 抓取页面后扫描（需 HTTP 访问） |
+| 帮我检查 [Skill marketplace URL] | 抓取页面后扫描（需 HTTP 访问，优先使用 `agent-reach` 抓取） |
 
 ---
 
@@ -26,7 +26,7 @@ tags: [security, skill-audit, prompt-injection, scan]
 
 - **.zip 文件**：解压到 `/tmp/`，找所有 `SKILL.md` 文件
 - **.md 文件 / 纯文字 / 代码块**：直接读取内容
-- **URL 链接**：使用 HTTP 请求抓取页面，提取 SKILL.md 内容
+- **URL 链接**：使用 `agent-reach` (xread) 抓取页面，提取 SKILL.md 内容（fallback: curl/HTTP 请求）
 - **多文件（批量）**：逐个解析，汇总结果
 
 ### Step 2：执行 7 大维度检测
@@ -139,7 +139,7 @@ tags: [security, skill-audit, prompt-injection, scan]
 常见需要介入的场景：
 - `references/detection-rules.md` 反复读取失败（skill 安装不完整）
 - zip 文件解压失败且多种方法均无效（文件损坏）
-- URL 链接内容抓取失败（目标不可达或 HTTP 工具未安装）
+- URL 链接内容抓取失败（目标不可达、agent-reach 未安装且 HTTP 请求也失败）
 
 ---
 
