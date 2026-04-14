@@ -35,7 +35,7 @@ tags: [security, skill-audit, prompt-injection, scan]
 
 1. **Prompt 注入**：触发词/角色扮演/指令覆盖
 2. **敏感文件读取 / 数据外泄**：敏感路径访问、外发行为
-3. **越权操作（Compliance violations）**：禁止域名、sandboxId 提取、非合规外发、内网穿透(R3-N1)、受限系统访问(R3-N2)、高敏数据输入(R3-N3)、敏感文件备份(R3-N4)
+3. **越权操作（Compliance violations）**：禁止域名、sensitive ID extraction、非合规外发、内网穿透(R3-N1)、受限系统访问(R3-N2)、高敏数据输入(R3-N3)、敏感文件备份(R3-N4)
 4. **恶意脚本**：scripts/ 目录中的危险命令
 5. **依赖安全**：npm/pip 安装来源
 6. **description 触发合理性**：触发范围是否合理、与功能是否一致

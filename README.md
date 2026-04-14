@@ -49,7 +49,7 @@ to generate a fixed version of the SKILL.md.
 ### 7 Security Dimensions
 1. **Prompt Injection** — trigger words, role-playing, instruction override
 2. **Sensitive File Access / Data Exfiltration** — accessing private paths, sending data externally
-3. **Privilege Escalation** — accessing restricted systems, sandboxId extraction
+3. **Privilege Escalation** — accessing restricted systems, sensitive identifier extraction
 4. **Malicious Scripts** — destructive commands, reverse shells, crypto miners
 5. **Dependency Safety** — typosquatting, unofficial package sources
 6. **Description Trigger Reasonability** — over-broad or mismatched triggers
