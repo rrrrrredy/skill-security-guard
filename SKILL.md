@@ -1,10 +1,11 @@
 ---
 name: skill-security-guard
+version: 5.0.0
 description: "Scan Skill code for security risks across 7 dimensions: Prompt injection, sensitive file access, privilege escalation, malicious scripts, compliance violations, dependency safety, and description reasonability. Outputs A-F rating with remediation advice. Supports .zip/.md/text/code-block input and batch scanning. Triggers: security check, skill audit, scan skill, review skill. Not for: runtime monitoring."
 tags: [security, skill-audit, prompt-injection, scan]
 ---
 
-# Skill 安全卫士 V5 🛡️
+# skill-security-guard 5.0.0
 
 扫描 Skill 的安全风险，输出评分、置信度和修复建议。
 
@@ -154,7 +155,7 @@ tags: [security, skill-audit, prompt-injection, scan]
 
 ## Changelog
 
-### V5（2026-04-08）
+### 5.0.0（2026-04-08）
 - description 改为单行格式（去掉多行 block scalar `>`）
 - 补充 `tags`（[security, skill-audit, prompt-injection, scan]）
 - 新建 `scripts/scan.sh`（zip 解压 + SKILL.md 枚举入口脚本）
