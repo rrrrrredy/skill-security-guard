@@ -27,9 +27,16 @@ git clone https://github.com/rrrrrredy/skill-security-guard.git ~/.openclaw/skil
 
 ## Usage
 
-**Trigger phrases:**
+**Trigger phrases (EN):**
 - `security check`, `skill audit` — run a security scan
 - `scan skill`, `review skill` — audit a skill
+
+**触发词（中文）：**
+- `安全检查`、`Skill 安全`、`安全扫描` — 执行安全扫描
+- `检查 Skill`、`审查 skill`、`skill 审计` — 审计一个 Skill
+- `装之前检查` — 安装前安全审查
+- `帮我检查这个 Skill` — 完整安全扫描
+- `批量检查` — 解压 zip 后逐个扫描并汇总
 
 **Example output:**
 ```
