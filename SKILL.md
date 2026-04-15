@@ -162,16 +162,16 @@ tags: [security, skill-audit, prompt-injection, scan]
 - 确认 `references/detection-rules.md` 存在于目录结构
 - frontmatter version: V4 → V5，H1 标题同步为 V5
 
-### v4（2026-04-07）
+### 4.0.0（2026-04-07）
 - 新增 R3-N1～N5 红线规则（内网穿透、HR系统、C4数据、敏感备份、description 过度触发）
 - 完善 7 大维度检测，新增 frontmatter 合规性维度
 - 新增白名单机制和自动修复章节
 - 补充 Gotchas（7 条高频误判）
 - 新增 Hard Stop
 
-### v3（历史版本）
+### 3.0.0
 - 新增批量扫描（zip 包）
 - 输出格式结构化（A-F 评分 + 置信度）
 
-### v1-v2（历史版本）
+### 1.0.0–2.0.0
 - 初版：Prompt 注入 + 敏感文件读取 2 维度扫描
