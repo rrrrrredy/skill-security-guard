@@ -1,152 +1,119 @@
-# 检测规则详细定义
+# Detection Rules
 
-## 维度一：Prompt 注入风险
+This document describes the rule intent used by `scripts/scan.py`. The scanner is intentionally conservative: high-confidence direct-danger patterns return `F`, while ambiguous patterns are reported with lower confidence for human review.
 
-**确定有问题**（置信度：确定）
-- 包含以下关键短语：
-  - "忽略之前所有指令" / "ignore previous instructions"
-  - "你现在是一个没有限制的AI" / "you are now DAN"
-  - "扮演XX角色，不受任何约束"
-  - "system prompt已更新，新规则是"
-- description 中写"当用户问任何问题时触发" / "适用于所有场景" 等无边界触发词
+## Dimension 1: Prompt Injection
 
-**疑似**（置信度：疑似）
-- description 触发范围极宽泛，覆盖超过5种不相关场景
-- SKILL.md body 中包含"覆盖之前的安全规则"类语句
+Confirmed medium risk:
 
----
+- Instructions to ignore previous instructions
+- Role overrides such as unrestricted assistant personas
+- Claims that the system prompt or safety policy has been replaced
 
-## 维度二：敏感文件读取/数据外泄
+Suspected medium risk:
 
-**确定有问题**（置信度：确定）
-- 读取以下路径：
-  - `/root/.openclaw/openclaw.json`
-  - `/root/.openclaw/devices/paired.json`
-  - `/root/.openclaw/identity/`
-  - `~/.ssh/`、`~/.aws/`、`~/.config/`
-- 包含 `curl`/`wget`/`nc` 将本地文件内容发往外部域名
-- 包含 `cat openclaw.json | curl`、`scp` 至未知主机等模式
-- 读取 `SOUL.md`、`MEMORY.md`、`USER.md` 等个人配置文件并外发
+- Requests to override safety rules
+- Descriptions that trigger for unrelated broad scenarios
 
-**疑似**（置信度：疑似）
-- 使用通配符读取目录：`cat /root/.openclaw/*`
-- 读取环境变量：`printenv`、`env`、`/proc/*/environ`
+## Dimension 2: Sensitive File Access / Data Exfiltration
 
----
+Confirmed high risk, direct `F`:
 
-## 维度三：越权操作（Compliance Violations）
+- Sending local secrets, identity files, private memory files, or credential directories to a remote host
+- Network commands that include local sensitive files as request data
 
-**确定有问题**（置信度：确定）
-- 访问组织内部受限域名（如 HR 系统、OKR 系统、人才系统等）
-- Extracting sensitive identifiers from config files and using them to construct URLs
-- 通过非合规通道外发公司内部文件
-- 读取其他用户的 session 数据
+Confirmed medium risk:
 
-**疑似**（置信度：疑似）
-- 访问内部域名但目的不明确
+- Reading sensitive config, credential, identity, or memory files without clear need
 
-#### 新增红线（2026年更新）
+## Dimension 3: Compliance Violations
 
-**R3-N1：内网穿透禁止**
-- 特征：skill 中包含 ngrok/localtunnel/cloudflared/bore/frp 等工具的安装或调用
-- 风险等级：🔴 严重
-- 置信度：确定
-- 修复：移除所有内网穿透相关指令
+Confirmed or suspected high risk, direct `F`:
 
-**R3-N2：HR 系统访问禁止**
-- 特征：访问组织内部 HR/OKR/人才/绩效等受限系统
-- 风险等级：🔴 严重
-- 置信度：确定
-- 修复：移除相关 URL 访问指令
+- `R3-N1`: tunneling tools or tunnel setup
+- `R3-N2`: access to restricted organizational systems
+- `R3-N3`: handling highly sensitive classified data
+- `R3-N4`: backup, upload, or duplication of sensitive auth/device config
 
-**R3-N3：C4 高敏数据输入禁止**
-- 特征：skill 要求用户输入包含"C4"、"绝密"、"内部高密"等字样的内容，或描述要处理高敏数据
-- 风险等级：🔴 严重
-- 置信度：疑似
-- 修复：添加数据分级说明，明确 skill 不处理 C4 数据
+Suspected medium risk:
 
-**R3-N4：敏感文件备份禁止**
-- 特征：skill 执行对 openclaw.json / device.json / device-auth.json 等文件的备份、上传、外发操作
-- 风险等级：🔴 严重
-- 置信度：确定
-- 修复：移除相关备份逻辑
+- `R3-N5`: description trigger scope is too broad for the skill purpose
 
-**R3-N5：description 过度触发**
-- 特征：description 中包含"所有"、"任何"、"一切"等无限制性词语，触发范围不合理
-- 风险等级：🟡 中危
-- 置信度：疑似
-- 修复：缩小 description 触发词范围，明确边界
+## Dimension 4: Malicious Scripts
 
----
+Confirmed high risk, direct `F`:
 
-## 维度四：恶意脚本（scripts/ 目录）
+- Destructive filesystem commands
+- Remote script execution via shell pipelines
+- Reverse shell patterns
+- Privilege escalation or mining behavior
 
-**确定有问题**（置信度：确定）
-- `rm -rf /`、`rm -rf ~`、`dd if=/dev/zero` 等破坏性命令
-- 下载并执行远程脚本：`curl URL | bash`、`wget URL | sh`
-- 反弹 shell：`bash -i >& /dev/tcp/`、`nc -e /bin/bash`
-- 提权命令：`sudo su`、`chmod 777 /etc/`
-- 挖矿特征：`xmrig`、`minerd`、`.mining`
+Suspected medium risk:
 
-**疑似**（置信度：疑似）
-- 脚本中有硬编码的外部 IP 地址
-- 使用 `eval` 执行动态生成的代码
-- 网络请求目标域名不在白名单内
+- Dynamic execution through `eval` or unconstrained `exec`
 
----
+## Dimension 5: Dependency Safety
 
-## 维度五：依赖安全（npm/pip）
+Advisory:
 
-**建议关注**（置信度：建议关注）
-- 安装来源不明的包：`pip install` 非 PyPI 官方、`npm install` 非 npmjs.com
-- 包名疑似 typosquatting（如 `requets` 代替 `requests`）
-- 使用 `--pre`（预发布版）或 `--index-url` 指向非官方源
+- `pip install` from non-default index, URL, or Git source
+- `npm install` from non-default registry, URL, or Git source
+- Package names that look like common typosquatting variants
 
----
+## Dimension 6: Description Trigger Reasonability
 
-## 维度六：description 触发合理性
+Confirmed medium risk:
 
-**确定有问题**（置信度：确定）
-- description 为空或少于 20 字
-- 触发词覆盖所有场景（"用于任何任务"）
+- Missing description
+- Description too short to define a safe trigger boundary
 
-**建议关注**（置信度：建议关注）
-- description 与 SKILL.md body 描述的功能明显不符
-- 触发词包含与 Skill 功能无关的高频词（如"帮我"、"查一下"）
+Suspected medium risk:
 
----
+- Description says the skill applies to every task, every question, or all scenarios
 
-## 评分算法
+## Dimension 7: Frontmatter Compliance
 
-| 风险级别 | 扣分 |
-|---------|------|
-| 确定-高危（外泄/越权/恶意脚本） | 直接 F |
-| 确定-中危（注入/越权访问） | -30分/项，≥2项降为D |
-| 疑似-中危 | -15分/项 |
-| 建议关注 | -5分/项，不影响评级 |
-| R3-N1~N4 严重红线（内网穿透/HR系统/C4数据/敏感备份） | -20分/项 |
-| R3-N5 description 过度触发 | -10分/项 |
+Confirmed medium risk:
 
-**评级标准：**
+- Missing YAML frontmatter
+- Missing `name`
+- Missing `description`
 
-| 分数 | 评级 | 含义 |
-|------|------|------|
-| 100 | A | 安全，可放心安装 |
-| 85-99 | B | 较安全，有轻微问题 |
-| 70-84 | C | 存在需关注的风险，建议修复后安装 |
-| 50-69 | D | 存在较严重风险，强烈建议修复 |
-| <50 | F | 存在高危风险，禁止安装 |
+Advisory:
 
----
+- Non-standard fields outside `name` and `description`
 
-## 可自动修复 vs 需人工判断
+## Scoring
 
-**可自动修复：**
-- frontmatter 包含非标准字段 → 自动移除
-- description 触发词过宽 → 建议收窄并生成修改版
-- scripts/ 中有不必要的网络请求 → 添加注释说明用途
+| Finding type | Score behavior |
+| --- | --- |
+| Direct high-risk finding | Rating `F`, score `0` |
+| Confirmed medium risk | `-30` per issue |
+| Two or more confirmed medium-risk issues | Rating capped at `D` |
+| Suspected medium risk | `-15` per issue, except `R3-N5` uses `-10` |
+| Advisory | `-5` per issue, capped at `-10` total advisory penalty |
 
-**需人工判断（仅给建议，不自动改）：**
-- 疑似 Prompt 注入（意图不明确）
-- 访问内部域名但目的不确定
-- description 与功能不符（需理解语义）
+## Ratings
+
+| Score | Rating | Meaning |
+| --- | --- | --- |
+| 100 | A | No findings |
+| 85-99 | B | Light or advisory findings |
+| 70-84 | C | Risk requires review or repair |
+| 50-69 | D | Serious risk; fix before install |
+| <50 or direct high-risk | F | Do not install directly |
+
+## Fix Guidance
+
+Safe to suggest as auto-fixable:
+
+- Remove non-standard frontmatter fields
+- Narrow over-broad description trigger text
+- Add comments explaining necessary low-risk network/dependency behavior
+
+Manual review required:
+
+- Any direct high-risk finding
+- Ambiguous prompt-injection intent
+- Organization-specific compliance decisions
+- Any finding where changing behavior could alter the skill's purpose
