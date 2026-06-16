@@ -1,71 +1,106 @@
 # skill-security-guard
 
-Skill code security scanner — 7-dimension analysis with A-F rating and fix suggestions.
+Static security scanner for OpenClaw/Codex-style skill packages.
 
-> OpenClaw Skill — works with [OpenClaw](https://github.com/openclaw/openclaw) AI agents
+It performs a deterministic 7-dimension scan, assigns an A-F rating, reports confidence levels, and gives remediation guidance. The CLI is implemented in Python standard library only, so it runs on Windows, macOS, and Linux without project dependencies.
 
-## What It Does
+> OpenClaw Skill — works with [OpenClaw](https://github.com/openclaw/openclaw) AI agents and can also be used as a standalone scanner.
 
-Scans OpenClaw skill code for security risks across 7 dimensions: prompt injection, sensitive file access, privilege escalation, malicious scripts, dependency safety, description trigger reasonableness, and frontmatter compliance. Outputs a structured report with A-F security rating, per-issue confidence levels (confirmed / suspected / advisory), and actionable fix suggestions. Supports `.zip`, `.md`, plain text, code blocks, and batch scanning.
+## What It Scans
+
+- Prompt-injection and instruction-override patterns
+- Sensitive file reads and data exfiltration patterns
+- Compliance red lines such as tunneling, restricted-system access, highly sensitive data handling, and sensitive config backup/upload
+- Malicious script patterns in `scripts/`
+- Dependency installation from non-default or suspicious sources
+- Over-broad or unclear `description` trigger scopes
+- Frontmatter compliance (`name` and `description`)
 
 ## Quick Start
 
 ```bash
-openclaw skill install skill-security-guard
-# Or:
-git clone https://github.com/rrrrrredy/skill-security-guard.git ~/.openclaw/skills/skill-security-guard
+git clone https://github.com/rrrrrredy/skill-security-guard.git
+cd skill-security-guard
+
+python scripts/scan.py path/to/SKILL.md
+python scripts/scan.py path/to/skill-directory
+python scripts/scan.py path/to/skills.zip
+python scripts/scan.py --text "inline skill text"
 ```
 
-## Features
+Shell wrapper:
 
-- **7-dimension security scan**: Prompt injection, sensitive file reads, privilege escalation (Meituan red lines), malicious scripts, dependency safety, description triggers, frontmatter compliance
-- **A-F security rating**: Quantified scoring with per-issue confidence levels
-- **Batch scanning**: Upload a zip with multiple skills, get individual + summary reports
-- **Auto-fix**: Reply "修复" to auto-fix safe issues (non-standard frontmatter, missing comments)
-- **Whitelist mechanism**: Mark known-acceptable risks to exclude from scoring (session-scoped)
-- **Multiple input formats**: `.zip`, `.md`, plain text, code blocks, Friday platform links
-
-## Usage
-
-**Trigger phrases (EN):**
-- `security check`, `skill audit` — run a security scan
-- `scan skill`, `review skill` — audit a skill
-
-**触发词（中文）：**
-- `安全检查`、`Skill 安全`、`安全扫描` — 执行安全扫描
-- `检查 Skill`、`审查 skill`、`skill 审计` — 审计一个 Skill
-- `装之前检查` — 安装前安全审查
-- `帮我检查这个 Skill` — 完整安全扫描
-- `批量检查` — 解压 zip 后逐个扫描并汇总
-
-**Example output:**
+```bash
+bash scripts/scan.sh path/to/skill-directory
 ```
-🛡️ Skill 安全报告：my-skill
 
-📊 安全评级：B（85分）— 较安全，有轻微问题
+JSON output:
 
-🚨 风险项（共 2 项）：
-1. [中危·确定] non-standard frontmatter fields
-2. [低危·疑似] unexplained external request in scripts/
+```bash
+python scripts/scan.py path/to/skill-directory --format json
+```
 
-✅ 通过项（5 项）：...
+Ignore a reviewed rule for one run:
+
+```bash
+python scripts/scan.py path/to/skill-directory --ignore R3-N5
+```
+
+## Input Support
+
+- `SKILL.md` or any local text/code file
+- Skill directory containing one or more `SKILL.md` files
+- `.zip` packages, extracted with path traversal checks and size/file-count limits
+- `-` for stdin
+- `--text` for inline text
+- Public `http://` or `https://` text URLs, capped by response size and timeout
+
+Directory and zip scans include `SKILL.md` and files under `scripts/` by default. Reference docs are skipped to reduce false positives; use `--include-references` when you explicitly want to scan reference markdown too.
+
+## Rating Model
+
+- `A`: no findings
+- `B`: advisory-only or light findings
+- `C`: medium-risk findings that should be reviewed
+- `D`: multiple confirmed medium-risk findings or serious degradation
+- `F`: direct high-risk finding, such as exfiltration, tunneling, destructive commands, or remote script execution
+
+The exact detection patterns and scoring rules live in [`references/detection-rules.md`](references/detection-rules.md).
+
+## Development
+
+Run tests:
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Run sample scans:
+
+```bash
+python scripts/scan.py tests/fixtures/safe-skill
+python scripts/scan.py tests/fixtures/high-risk-skill
 ```
 
 ## Project Structure
 
-```
+```text
 skill-security-guard/
-├── SKILL.md                        # Main skill documentation
+├── SKILL.md
 ├── scripts/
-│   └── scan.sh                     # Zip extraction & SKILL.md enumeration entry point
-└── references/
-    └── detection-rules.md          # Detection patterns, keywords & scoring algorithm
+│   ├── scan.py
+│   └── scan.sh
+├── references/
+│   └── detection-rules.md
+├── tests/
+│   ├── fixtures/
+│   └── test_scan.py
+└── .github/workflows/ci.yml
 ```
 
-## Requirements
+## Limits
 
-- OpenClaw agent runtime
-- `unzip` or Python 3 (for zip extraction fallback)
+This is a static scanner. It does not execute skills, monitor runtime behavior, prove package provenance, or replace human security review. Findings are intentionally conservative and should be reviewed before blocking a skill.
 
 ## License
 
