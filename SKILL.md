@@ -1,11 +1,11 @@
 ---
 name: skill-security-guard
-description: "Scan OpenClaw/Codex-style skill packages for static security risks. Use for skill audit, security check, prompt-injection review, suspicious scripts, unsafe dependencies, zip package review, and pre-install skill review. Not for runtime monitoring."
+description: "Scan agent skill packages for static security risks. Use for skill audit, security check, prompt-injection review, suspicious scripts, unsafe dependencies, zip package review, and pre-install skill review. Not for runtime monitoring."
 ---
 
 # skill-security-guard
 
-扫描 OpenClaw/Codex-style Skill 包的静态安全风险，输出 A-F 评级、置信度、证据行和修复建议。
+扫描 agent skill 包的静态安全风险，输出 A-F 评级、置信度、证据行和修复建议。
 
 ## 场景映射
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static security scanner for OpenClaw/Codex-style skill packages."""
+"""Static security scanner for agent skill packages."""
 
 from __future__ import annotations
 

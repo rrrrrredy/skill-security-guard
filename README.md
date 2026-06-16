@@ -1,10 +1,14 @@
 # skill-security-guard
 
-Static security scanner for OpenClaw/Codex-style skill packages.
+[![CI](https://github.com/rrrrrredy/skill-security-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/rrrrrredy/skill-security-guard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
-It performs a deterministic 7-dimension scan, assigns an A-F rating, reports confidence levels, and gives remediation guidance. The CLI is implemented in Python standard library only, so it runs on Windows, macOS, and Linux without project dependencies.
+Static security scanner for agent skill packages.
 
-> OpenClaw Skill — works with [OpenClaw](https://github.com/openclaw/openclaw) AI agents and can also be used as a standalone scanner.
+`skill-security-guard` performs a deterministic 7-dimension scan, assigns an A-F risk rating, reports confidence levels, and gives remediation guidance. The CLI uses only the Python standard library, so it runs on Windows, macOS, and Linux without project dependencies.
+
+It can be used as an OpenClaw skill or as a standalone scanner for local skill packages.
 
 ## What It Scans
 
@@ -46,6 +50,38 @@ Ignore a reviewed rule for one run:
 python scripts/scan.py path/to/skill-directory --ignore R3-N5
 ```
 
+## Example Output
+
+Safe skill:
+
+```text
+Skill Security Report: safe-skill
+Rating: A (100/100)
+
+Issues: none
+
+Passed dimensions:
+- Prompt injection
+- Sensitive file access / data exfiltration
+- Compliance violations
+- Malicious scripts
+- Dependency safety
+- Description trigger reasonability
+- Frontmatter compliance
+```
+
+High-risk skill:
+
+```text
+Skill Security Report: high-risk-skill
+Rating: F (0/100)
+
+Issues (5):
+- [high/confirmed] M4-REMOTE-SCRIPT-EXEC: Remote script execution detected
+- [high/confirmed] S2-EXFILTRATION: Sensitive data exfiltration pattern detected
+- [medium/confirmed] P1-PROMPT-INJECTION: Prompt-injection instruction detected
+```
+
 ## Input Support
 
 - `SKILL.md` or any local text/code file
@@ -56,6 +92,13 @@ python scripts/scan.py path/to/skill-directory --ignore R3-N5
 - Public `http://` or `https://` text URLs, capped by response size and timeout
 
 Directory and zip scans include `SKILL.md` and files under `scripts/` by default. Reference docs are skipped to reduce false positives; use `--include-references` when you explicitly want to scan reference markdown too.
+
+## Requirements
+
+- Python 3.10+
+- No runtime package dependencies
+
+The CI workflow currently tests Python 3.11 and 3.12 on Ubuntu.
 
 ## Rating Model
 
@@ -82,6 +125,12 @@ python scripts/scan.py tests/fixtures/safe-skill
 python scripts/scan.py tests/fixtures/high-risk-skill
 ```
 
+Run the scanner against this repository:
+
+```bash
+python scripts/scan.py .
+```
+
 ## Project Structure
 
 ```text
@@ -101,6 +150,12 @@ skill-security-guard/
 ## Limits
 
 This is a static scanner. It does not execute skills, monitor runtime behavior, prove package provenance, or replace human security review. Findings are intentionally conservative and should be reviewed before blocking a skill.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local development and rule-design guidance.
+
+For vulnerability reports, see [SECURITY.md](SECURITY.md).
 
 ## License
 
