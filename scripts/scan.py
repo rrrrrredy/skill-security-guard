@@ -782,13 +782,47 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     if not lines or lines[0].strip() != "---":
         return {}
 
-    values: dict[str, str] = {}
+    frontmatter_lines: list[str] = []
     for line in lines[1:]:
         if line.strip() == "---":
             break
+        frontmatter_lines.append(line)
+
+    frontmatter_text = "\n".join(frontmatter_lines)
+    try:
+        import yaml  # type: ignore[import-not-found]
+
+        parsed = yaml.safe_load(frontmatter_text) or {}
+        if isinstance(parsed, dict):
+            return {str(key).strip().lower(): "" if value is None else str(value) for key, value in parsed.items()}
+    except Exception:
+        pass
+
+    values: dict[str, str] = {}
+    index = 0
+    while index < len(frontmatter_lines):
+        line = frontmatter_lines[index]
         match = re.match(r"^([A-Za-z0-9_-]+):\s*(.*)$", line)
         if match:
-            values[match.group(1).strip().lower()] = match.group(2).strip()
+            key = match.group(1).strip().lower()
+            value = match.group(2).strip()
+            if value in {">", ">-", ">+", "|", "|-", "|+"}:
+                block_lines: list[str] = []
+                index += 1
+                while index < len(frontmatter_lines):
+                    next_line = frontmatter_lines[index]
+                    if re.match(r"^[A-Za-z0-9_-]+:\s*", next_line):
+                        index -= 1
+                        break
+                    block_lines.append(next_line.strip())
+                    index += 1
+                if value.startswith("|"):
+                    values[key] = "\n".join(line for line in block_lines if line)
+                else:
+                    values[key] = " ".join(line for line in block_lines if line)
+            else:
+                values[key] = value
+        index += 1
     return values
 
 
@@ -891,6 +925,14 @@ def render_text(reports: list[Report]) -> str:
     return "\n".join(chunks).rstrip()
 
 
+def write_stdout(text: str) -> None:
+    try:
+        sys.stdout.write(text)
+        sys.stdout.write("\n")
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write((text + "\n").encode("utf-8"))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     try:
@@ -907,9 +949,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.format == "json":
-        print(json.dumps([report.to_dict() for report in reports], indent=2, ensure_ascii=False))
+        write_stdout(json.dumps([report.to_dict() for report in reports], indent=2, ensure_ascii=False))
     else:
-        print(render_text(reports))
+        write_stdout(render_text(reports))
 
     return 1 if any(report.rating in {"D", "F"} for report in reports) else 0
 

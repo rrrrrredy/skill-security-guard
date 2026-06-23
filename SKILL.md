@@ -1,11 +1,38 @@
 ---
 name: skill-security-guard
-description: "Scan agent skill packages for static security risks. Use for skill audit, security check, prompt-injection review, suspicious scripts, unsafe dependencies, zip package review, and pre-install skill review. Not for runtime monitoring."
+description: Scan agent skill packages for static security risks. Use for skill audit, security check, prompt-injection review, suspicious scripts, unsafe dependencies, zip package review, and pre-install skill review. Not for runtime monitoring.
 ---
 
 # skill-security-guard
 
 扫描 agent skill 包的静态安全风险，输出 A-F 评级、置信度、证据行和修复建议。
+
+## Routing Contract
+
+### When to use
+
+- 用户要求审计、扫描、安装前检查、zip 检查、prompt-injection review、可疑脚本检查或依赖风险检查某个 skill 包。
+- 用户提供 `SKILL.md`、skill 目录、zip、公开文本 URL 或 inline skill 文本。
+
+### When not to use
+
+- 不用于运行时监控、沙箱执行、漏洞利用验证或替代人工法律/合规判断。
+- 不用于审计普通应用仓库，除非任务目标明确是其中的 skill 包。
+
+### Required inputs
+
+- 扫描目标路径、zip、URL、stdin 或 `--text` 内容。
+- 可选：本次人工确认可忽略的规则 ID。
+
+### Output
+
+- 固定输出评级、分数、命中规则、证据文件/行号、置信度、修复建议和通过维度。
+- JSON 模式必须保持机器可解析，不输出额外解释文本。
+
+### Failure handling
+
+- 输入不存在、zip 损坏、URL 超时、编码异常或路径越界时停止扫描并报告原因。
+- 高危直接失败规则命中时，不给出“可直接安装”的结论。
 
 ## 场景映射
 

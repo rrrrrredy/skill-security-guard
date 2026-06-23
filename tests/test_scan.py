@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import builtins
+import io
 import sys
 import unittest
 import zipfile
@@ -42,6 +44,69 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(reports[0].rating, "B")
         self.assertEqual([issue.rule_id for issue in issues], ["F7-NONSTANDARD-FIELDS"])
         self.assertIs(issues[0].auto_fix, True)
+
+    def test_folded_yaml_description_is_parsed_as_full_text(self):
+        skill_text = """---
+name: folded-description
+description: >
+  Use when reviewing a skill with a long multi-line trigger description.
+  This should be parsed as one description, not as the literal greater-than marker.
+---
+
+# Folded Description
+
+Do the task.
+"""
+
+        reports = scanner.scan_source(None, text=skill_text)
+        rule_ids = {issue.rule_id for issue in reports[0].issues}
+
+        self.assertNotIn("D6-SHORT-DESCRIPTION", rule_ids)
+        self.assertNotIn("D6-MISSING-DESCRIPTION", rule_ids)
+
+    def test_folded_yaml_description_falls_back_without_pyyaml(self):
+        skill_text = """---
+name: folded-description
+description: >
+  Use when reviewing a skill with a long multi-line trigger description.
+  This should still be parsed when PyYAML is unavailable.
+---
+
+# Folded Description
+"""
+        original_import = builtins.__import__
+
+        def import_without_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("no yaml")
+            return original_import(name, *args, **kwargs)
+
+        try:
+            builtins.__import__ = import_without_yaml
+            frontmatter = scanner.parse_frontmatter(skill_text)
+        finally:
+            builtins.__import__ = original_import
+
+        self.assertEqual(frontmatter["name"], "folded-description")
+        self.assertIn("long multi-line trigger description", frontmatter["description"])
+
+    def test_write_stdout_uses_utf8_buffer_on_unicode_error(self):
+        class NarrowStdout:
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, text):
+                raise UnicodeEncodeError("gbk", text, 0, 1, "blocked")
+
+        original_stdout = scanner.sys.stdout
+        fake_stdout = NarrowStdout()
+        try:
+            scanner.sys.stdout = fake_stdout
+            scanner.write_stdout("报告 ✅")
+        finally:
+            scanner.sys.stdout = original_stdout
+
+        self.assertEqual(fake_stdout.buffer.getvalue(), "报告 ✅\n".encode("utf-8"))
 
     def test_missing_file_is_a_clear_scan_error(self):
         missing = FIXTURES / "does-not-exist.md"
