@@ -8,7 +8,7 @@ Static security scanner for agent skill packages.
 
 `skill-security-guard` performs a deterministic 7-dimension scan, assigns an A-F risk rating, reports confidence levels, and gives remediation guidance. The CLI uses only the Python standard library, so it runs on Windows, macOS, and Linux without project dependencies.
 
-It can be used as an OpenClaw skill or as a standalone scanner for local skill packages.
+It can be used as an OpenClaw skill, as a DeepSeek Harness community Bundle, or as a standalone scanner for local skill packages.
 
 ## What It Scans
 
@@ -98,7 +98,23 @@ Directory and zip scans include `SKILL.md` and files under `scripts/` by default
 - Python 3.10+
 - No runtime package dependencies
 
-The CI workflow currently tests Python 3.11 and 3.12 on Ubuntu.
+The scanner CI job tests Python 3.11 and 3.12 on Ubuntu. The DeepSeek Harness Bundle job tests Node.js 22.19 and 24 on both Ubuntu and Windows with Python 3.11.
+
+## DeepSeek Harness
+
+The `dsh-skill-security-guard` community Bundle registers this repository's existing `SKILL.md` through the native Cordis Skill Provider API. It packages the same scanner and detection rules rather than maintaining a second implementation.
+
+After the package is published, install it into a profile:
+
+```bash
+dsh plugin --profile headless add dsh-skill-security-guard@0.1.0
+dsh --profile headless --dump-config
+dsh --profile headless "Use skill-security-guard to scan ./path/to/a-skill."
+```
+
+Then ask the agent to use `skill-security-guard` to scan a file, directory, zip, URL, or inline skill text. Python 3.10+ is required when the scanner runs. See [`integrations/deepseek-harness`](integrations/deepseek-harness) for compatibility, privacy boundaries, local package verification, and uninstall instructions.
+
+This is a community plugin, not an official DeepSeek plugin.
 
 ## Rating Model
 
@@ -146,6 +162,8 @@ skill-security-guard/
 │   └── test_scan.py
 └── .github/workflows/ci.yml
 ```
+
+The DeepSeek Harness integration, including its package manifest, source, build scripts, and tests, lives in [`integrations/deepseek-harness`](integrations/deepseek-harness).
 
 ## Limits
 

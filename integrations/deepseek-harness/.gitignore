@@ -1,0 +1,7 @@
+assets/
+lib/
+LICENSE
+node_modules/
+pnpm-workspace.yaml
+.pack/
+*.tgz

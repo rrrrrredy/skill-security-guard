@@ -28,3 +28,118 @@ jobs:
 
       - name: Run CLI on repository skill
         run: python scripts/scan.py SKILL.md
+
+  deepseek-harness-bundle:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ["22.19.0", "24"]
+
+    defaults:
+      run:
+        working-directory: integrations/deepseek-harness
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: integrations/deepseek-harness/pnpm-lock.yaml
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Bundle dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Bundle
+        run: pnpm verify
+
+      - name: Pack release candidate
+        run: pnpm pack --pack-destination .pack
+
+  deepseek-harness-e2e:
+    name: DSH E2E (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node-version: "22.19.0"
+          - os: windows-latest
+            node-version: "24"
+
+    defaults:
+      run:
+        working-directory: integrations/deepseek-harness
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: integrations/deepseek-harness/pnpm-lock.yaml
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Bundle dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack Bundle under test
+        run: pnpm pack --pack-destination .pack
+
+      - name: Install isolated DeepSeek Harness runtime
+        shell: pwsh
+        run: |
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "dsh-runtime"
+          New-Item -ItemType Directory $runtimeRoot | Out-Null
+          Push-Location $runtimeRoot
+          pnpm init | Out-Null
+          pnpm `
+            --allow-build='@deepseek-ai/dsh-subprocess-local' `
+            --allow-build='@google/genai' `
+            --allow-build='koffi' `
+            --allow-build='node-pty' `
+            --allow-build='protobufjs' `
+            add --save-exact '@deepseek-ai/dsh@0.1.0-rc.6'
+          pnpm ignored-builds
+          Pop-Location
+
+      - name: Run deterministic headless Skill E2E
+        shell: pwsh
+        run: |
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "dsh-runtime"
+          $tarball = (Get-ChildItem .pack -Filter "dsh-skill-security-guard-*.tgz" | Select-Object -First 1).FullName
+          $pythonExecutable = python -c "import sys; print(sys.executable)"
+          $env:DSH_ENTRY = Join-Path $runtimeRoot "node_modules/@deepseek-ai/dsh/lib/bin.js"
+          $env:DSH_TARBALL = $tarball
+          $env:DSH_E2E_ROOT = Join-Path $env:RUNNER_TEMP "dsh-skill-security-guard-e2e"
+          $env:PYTHON_EXECUTABLE = $pythonExecutable
+          $env:DSH_E2E_PERMISSION_MODE = "danger-full-access"
+          pnpm test:e2e:dsh
