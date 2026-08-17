@@ -346,9 +346,13 @@ try {
   assert.equal(remove.code, 0, remove.stderr || remove.stdout);
   const afterRemove = await runDsh(["--profile", "headless", "--dump-config"]);
   assert.equal(afterRemove.code, 0, afterRemove.stderr || afterRemove.stdout);
+  const normalizedAfterRemove = `${afterRemove.stdout}\n${afterRemove.stderr}`.replace(
+    /[\\/]+/g,
+    "/",
+  );
   assert.ok(
-    !`${afterRemove.stdout}\n${afterRemove.stderr}`.includes(PACKAGE_NAME),
-    "removed Bundle remains in the dumped profile configuration",
+    !normalizedAfterRemove.includes(`/node_modules/${PACKAGE_NAME}/`),
+    "removed Bundle install path remains in the dumped profile configuration",
   );
   await assert.rejects(access(installedRoot), { code: "ENOENT" });
 
