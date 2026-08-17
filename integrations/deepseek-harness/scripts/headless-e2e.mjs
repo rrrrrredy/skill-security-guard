@@ -20,7 +20,15 @@ function requiredPath(name) {
 }
 
 const dshEntry = requiredPath("DSH_ENTRY");
-const tarball = requiredPath("DSH_TARBALL");
+const packageSpec = process.env.DSH_PACKAGE_SPEC?.trim();
+const tarball = process.env.DSH_TARBALL?.trim();
+if (!packageSpec && !tarball) {
+  throw new Error("exactly one of DSH_PACKAGE_SPEC or DSH_TARBALL must be set");
+}
+if (packageSpec && tarball) {
+  throw new Error("DSH_PACKAGE_SPEC and DSH_TARBALL are mutually exclusive");
+}
+const installSpec = packageSpec || requiredPath("DSH_TARBALL");
 const scratchRoot = requiredPath("DSH_E2E_ROOT");
 const pythonExecutable = requiredPath("PYTHON_EXECUTABLE");
 const keepArtifacts = process.env.DSH_E2E_KEEP === "1";
@@ -29,7 +37,11 @@ if (!new Set(["workspace-write", "danger-full-access"]).has(permissionMode)) {
   throw new Error("DSH_E2E_PERMISSION_MODE must be workspace-write or danger-full-access");
 }
 
-await Promise.all([access(dshEntry), access(tarball), access(pythonExecutable)]);
+await Promise.all([
+  access(dshEntry),
+  access(pythonExecutable),
+  ...(packageSpec ? [] : [access(installSpec)]),
+]);
 await mkdir(scratchRoot, { recursive: true });
 const home = await mkdtemp(path.join(scratchRoot, "skill-security-guard-"));
 
@@ -190,7 +202,7 @@ let server;
 let passed = false;
 const requestBodies = [];
 try {
-  const install = await runDsh(["plugin", "--profile", "headless", "add", tarball]);
+  const install = await runDsh(["plugin", "--profile", "headless", "add", installSpec]);
   assert.equal(install.code, 0, install.stderr || install.stdout);
 
   const profileDir = path.join(home, "profiles", "headless");
@@ -324,6 +336,26 @@ try {
   assert.equal(verificationSummary.packagedScanner, true);
   assert.deepEqual(verificationSummary.scannerResult, { rating: "A", score: 100 });
 
+  const remove = await runDsh([
+    "plugin",
+    "--profile",
+    "headless",
+    "remove",
+    PACKAGE_NAME,
+  ]);
+  assert.equal(remove.code, 0, remove.stderr || remove.stdout);
+  const afterRemove = await runDsh(["--profile", "headless", "--dump-config"]);
+  assert.equal(afterRemove.code, 0, afterRemove.stderr || afterRemove.stdout);
+  const normalizedAfterRemove = `${afterRemove.stdout}\n${afterRemove.stderr}`.replace(
+    /[\\/]+/g,
+    "/",
+  );
+  assert.ok(
+    !normalizedAfterRemove.includes(`/node_modules/${PACKAGE_NAME}/`),
+    "removed Bundle install path remains in the dumped profile configuration",
+  );
+  await assert.rejects(access(installedRoot), { code: "ENOENT" });
+
   passed = true;
   console.log(
     JSON.stringify({
@@ -333,6 +365,7 @@ try {
       scannerResult: "A",
       sessionJsonlFiles: sessionFiles.length,
       structuralVerifier: verificationSummary.status,
+      removed: true,
       artifactsKept: keepArtifacts,
       ...(keepArtifacts ? { artifactRoot: home } : {}),
     }),

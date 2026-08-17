@@ -78,6 +78,8 @@ PYTHON_EXECUTABLE=/absolute/path/to/python \
 pnpm test:e2e:dsh
 ```
 
+To verify the package from the public npm registry instead, set `DSH_PACKAGE_SPEC=dsh-skill-security-guard@0.1.0` and omit `DSH_TARBALL`. Exactly one installation source is required.
+
 PowerShell equivalent:
 
 ```powershell
@@ -88,6 +90,6 @@ $env:PYTHON_EXECUTABLE = "C:\path\to\python.exe"
 pnpm test:e2e:dsh
 ```
 
-It installs the tarball into a fresh headless profile, drives `skill` and the platform shell through a loopback-only deterministic DeepSeek protocol server, verifies the packaged scanner returns rating A, and checks the append-only session JSONL for structural `tool/call` and `tool/result` evidence. Successful artifacts are deleted by default; set `DSH_E2E_KEEP=1` to retain the isolated profile for local inspection. The mock test does not replace the separate real-model release smoke.
+It installs the selected package source into a fresh headless profile, drives `skill` and the platform shell through a loopback-only deterministic DeepSeek protocol server, verifies the packaged scanner returns rating A, checks the append-only session JSONL for structural `tool/call` and `tool/result` evidence, and removes the Bundle with no remaining package reference in `--dump-config`. Successful artifacts are deleted by default; set `DSH_E2E_KEEP=1` to retain the isolated profile for local inspection. The mock test does not replace the separate real-model release smoke.
 
-Versioned candidate results and the still-open external release gates are recorded in the public [`0.1.0 release evidence`](https://github.com/rrrrrredy/skill-security-guard/blob/main/integrations/deepseek-harness/release-evidence/0.1.0.md). A candidate is not treated as publicly released until every external gate in that record is complete.
+Versioned candidate and public-release results are recorded in the public [`0.1.0 release evidence`](https://github.com/rrrrrredy/skill-security-guard/blob/main/integrations/deepseek-harness/release-evidence/0.1.0.md). The release was not treated as complete until every external gate in that record passed.
