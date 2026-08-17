@@ -1,0 +1,53 @@
+{
+  "name": "dsh-skill-security-guard",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness community Bundle for the skill-security-guard static scanner",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["assets", "lib", "cordis.patch.yml", "LICENSE", "README.md"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e:dsh": "node scripts/headless-e2e.mjs",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "verify": "pnpm run build && pnpm run verify:assets && pnpm run test",
+    "prepack": "pnpm run verify"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-skill": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.6"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rrrrrredy/skill-security-guard.git",
+    "directory": "integrations/deepseek-harness"
+  },
+  "homepage": "https://github.com/rrrrrredy/skill-security-guard#deepseek-harness",
+  "bugs": "https://github.com/rrrrrredy/skill-security-guard/issues",
+  "keywords": ["deepseek-harness", "dsh-plugin", "agent-skill", "security", "static-analysis"],
+  "license": "MIT"
+}
