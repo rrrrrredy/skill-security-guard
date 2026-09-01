@@ -103,6 +103,14 @@ Advisory:
 | 50-69 | D | Serious risk; fix before install |
 | <50 or direct high-risk | F | Do not install directly |
 
+## Attestation boundary
+
+`skill-security-scan.v1` binds the report to the exact UTF-8 scan bundle with
+`input_sha256`, records `scanner_version`, all `ignored_rules`, and a
+`complete` flag. Consumers must verify those fields before associating a rating
+with a candidate. The digest proves byte identity, not runtime safety or absence
+of behaviors that static rules cannot observe.
+
 ## Fix Guidance
 
 Safe to suggest as auto-fixable:

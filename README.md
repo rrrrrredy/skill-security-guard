@@ -44,6 +44,12 @@ JSON output:
 python scripts/scan.py path/to/skill-directory --format json
 ```
 
+Every emitted report is a deterministic `skill-security-scan.v1` attestation.
+It includes the scanner version, SHA-256 of the exact scanned UTF-8 bundle,
+the sorted per-run ignore list, and `complete: true`. A downstream release or
+impact ledger should reject a report whose `input_sha256` does not match the
+candidate bytes. See `schemas/skill-security-scan.v1.schema.json`.
+
 Ignore a reviewed rule for one run:
 
 ```bash
@@ -56,6 +62,9 @@ Safe skill:
 
 ```text
 Skill Security Report: safe-skill
+Scanner: 5.2.1 (skill-security-scan.v1)
+Input SHA-256: sha256:<64 lowercase hex characters>
+Complete: true
 Rating: A (100/100)
 
 Issues: none

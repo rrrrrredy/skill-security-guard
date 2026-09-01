@@ -26,7 +26,7 @@ description: Scan agent skill packages for static security risks. Use for skill 
 
 ### Output
 
-- 固定输出评级、分数、命中规则、证据文件/行号、置信度、修复建议和通过维度。
+- 固定输出报告 schema、扫描器版本、输入 SHA-256、忽略规则、完整性、评级、分数、命中规则、证据文件/行号、置信度、修复建议和通过维度。
 - JSON 模式必须保持机器可解析，不输出额外解释文本。
 
 ### Failure handling
@@ -79,7 +79,9 @@ bash scripts/scan.sh <path>
    - Dependency safety
    - Description trigger reasonability
    - Frontmatter compliance
-5. 输出文本或 JSON 报告，包括评级、分数、规则 ID、证据行、置信度和修复建议。
+5. 输出文本或 JSON 报告，包括输入内容 SHA-256、扫描器版本、完整性、忽略规则、评级、分数、规则 ID、证据行、置信度和修复建议。
+
+JSON 报告使用 `skill-security-scan.v1`。将它交给 Impact Ledger 等外部消费者时，必须核对 `input_sha256` 与候选 Skill 精确内容一致，并拒绝 `complete` 不为 `true` 的报告。评级本身不能替代该绑定。
 
 ## 评级
 
@@ -118,6 +120,17 @@ python scripts/scan.py <path> --ignore RULE_ID
 同一输入或同一工具调用连续失败超过 3 次时，停止重试并列出失败原因。常见原因包括 zip 损坏、URL 不可达、文件编码异常或路径权限问题。
 
 ## Changelog
+
+### 5.2.1
+
+- stdin 文件协议固定为严格 UTF-8，避免 Windows 系统编码损坏非 ASCII Skill 内容
+- 新增真实子进程 Unicode 回归用例，校验扫描报告与原始输入字节的 SHA-256 绑定
+
+### 5.2.0
+
+- JSON 与文本报告新增版本化 schema、扫描器版本和完整输入 SHA-256
+- 显式记录本次扫描忽略的规则以及 `complete` 状态
+- 新增 `schemas/skill-security-scan.v1.schema.json` 供文件协议消费者验证
 
 ### 5.1.0
 

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rrrrrredy/skill-security-guard/schemas/skill-security-scan.v1.schema.json",
+  "title": "Skill Security Guard Scan Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scanner_version", "target", "input_sha256", "ignored_rules", "complete", "rating", "score", "issues", "passed_dimensions"],
+  "properties": {
+    "schema_version": { "const": "skill-security-scan.v1" },
+    "scanner_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "target": { "type": "string", "minLength": 1 },
+    "input_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "ignored_rules": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "complete": { "const": true },
+    "rating": { "enum": ["A", "B", "C", "D", "F"] },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "issues": { "type": "array", "items": { "$ref": "#/$defs/issue" } },
+    "passed_dimensions": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "dimension", "severity", "confidence", "title", "evidence", "suggestion", "penalty", "direct_fail", "auto_fix"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "dimension": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["high", "medium", "low"] },
+        "confidence": { "enum": ["confirmed", "probable", "advisory"] },
+        "title": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "line", "text"],
+          "properties": {
+            "file": { "type": "string", "minLength": 1 },
+            "line": { "type": "integer", "minimum": 1 },
+            "text": { "type": "string" }
+          }
+        },
+        "suggestion": { "type": "string", "minLength": 1 },
+        "penalty": { "type": "integer", "minimum": 0 },
+        "direct_fail": { "type": "boolean" },
+        "auto_fix": { "type": "boolean" }
+      }
+    }
+  }
+}

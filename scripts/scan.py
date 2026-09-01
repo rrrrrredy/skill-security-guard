@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import re
 import shutil
@@ -16,7 +17,8 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 
-VERSION = "5.1.0"
+VERSION = "5.2.1"
+REPORT_SCHEMA_VERSION = "skill-security-scan.v1"
 MAX_ZIP_BYTES = 10 * 1024 * 1024
 MAX_ZIP_FILES = 500
 URL_TIMEOUT_SECONDS = 10
@@ -74,14 +76,22 @@ class Target:
 @dataclasses.dataclass(frozen=True)
 class Report:
     target: str
+    input_sha256: str
     rating: str
     score: int
     issues: list[Issue]
     passed_dimensions: list[str]
+    ignored_rules: list[str]
+    complete: bool
 
     def to_dict(self) -> dict:
         return {
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "scanner_version": VERSION,
             "target": self.target,
+            "input_sha256": self.input_sha256,
+            "ignored_rules": self.ignored_rules,
+            "complete": self.complete,
             "rating": self.rating,
             "score": self.score,
             "issues": [issue.to_dict() for issue in self.issues],
@@ -179,7 +189,7 @@ def collect_targets(
         raise ScanError("missing input: provide a path, URL, '-' for stdin, or --text")
 
     if source == "-":
-        return [Target(name="<stdin>", source="<stdin>", content=sys.stdin.read())]
+        return [Target(name="<stdin>", source="<stdin>", content=read_stdin_utf8())]
 
     if is_url(source):
         return [
@@ -213,6 +223,24 @@ def collect_targets(
             content=read_text(path),
         )
     ]
+
+
+def read_stdin_utf8() -> str:
+    """Read the file protocol as strict UTF-8 on every platform."""
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is not None:
+        raw = buffer.read()
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ScanError("stdin is not valid UTF-8") from exc
+
+    text = sys.stdin.read()
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ScanError("stdin contains invalid Unicode") from exc
+    return text
 
 
 def collect_directory_targets(path: Path, *, include_references: bool) -> list[Target]:
@@ -388,10 +416,13 @@ def scan_target(target: Target, *, ignored_rules: set[str]) -> Report:
     ]
     return Report(
         target=target.name,
+        input_sha256="sha256:" + hashlib.sha256(target.content.encode("utf-8")).hexdigest(),
         rating=rating,
         score=score,
         issues=issues,
         passed_dimensions=passed,
+        ignored_rules=sorted(ignored_rules),
+        complete=True,
     )
 
 
@@ -903,6 +934,11 @@ def render_text(reports: list[Report]) -> str:
     chunks: list[str] = []
     for report in reports:
         chunks.append(f"Skill Security Report: {report.target}")
+        chunks.append(f"Scanner: {VERSION} ({REPORT_SCHEMA_VERSION})")
+        chunks.append(f"Input SHA-256: {report.input_sha256}")
+        chunks.append(f"Complete: {str(report.complete).lower()}")
+        if report.ignored_rules:
+            chunks.append(f"Ignored rules: {', '.join(report.ignored_rules)}")
         chunks.append(f"Rating: {report.rating} ({report.score}/100)")
         chunks.append("")
         if report.issues:

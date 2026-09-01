@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import builtins
+import hashlib
 import io
+import json
+import subprocess
 import sys
 import unittest
 import zipfile
@@ -27,6 +30,25 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(reports[0].rating, "A")
         self.assertEqual(reports[0].issues, [])
+        report = reports[0].to_dict()
+        self.assertEqual(report["schema_version"], "skill-security-scan.v1")
+        self.assertEqual(report["scanner_version"], "5.2.1")
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["ignored_rules"], [])
+        content = scanner.collect_targets(str(FIXTURES / "safe-skill"))[0].content
+        self.assertEqual(
+            report["input_sha256"],
+            "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+
+    def test_attestation_records_ignored_rules_in_stable_order(self):
+        report = scanner.scan_source(
+            str(FIXTURES / "high-risk-skill"),
+            ignored_rules={"S2-EXFILTRATION", "P1-PROMPT-INJECTION"},
+        )[0].to_dict()
+
+        self.assertEqual(report["ignored_rules"], ["P1-PROMPT-INJECTION", "S2-EXFILTRATION"])
+        self.assertTrue(report["complete"])
 
     def test_high_risk_skill_rates_f_and_reports_exfiltration(self):
         reports = scanner.scan_source(str(FIXTURES / "high-risk-skill"))
@@ -107,6 +129,34 @@ description: >
             scanner.sys.stdout = original_stdout
 
         self.assertEqual(fake_stdout.buffer.getvalue(), "报告 ✅\n".encode("utf-8"))
+
+    def test_cli_stdin_is_strict_utf8_and_preserves_unicode_bytes(self):
+        skill_text = """---
+name: unicode-stdin
+description: Scan a UTF-8 Skill containing punctuation from real optimizer output.
+---
+
+# Unicode stdin
+
+Treat “whatever looks like cache” as an ambiguous target.
+"""
+
+        completed = subprocess.run(
+            [sys.executable, str(SCAN_PATH), "-", "--format", "json"],
+            input=skill_text.encode("utf-8"),
+            capture_output=True,
+            cwd=ROOT,
+            check=False,
+        )
+
+        self.assertIn(completed.returncode, {0, 1}, completed.stderr.decode("utf-8", errors="replace"))
+        reports = json.loads(completed.stdout.decode("utf-8"))
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(
+            reports[0]["input_sha256"],
+            "sha256:" + hashlib.sha256(skill_text.encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(reports[0]["scanner_version"], "5.2.1")
 
     def test_missing_file_is_a_clear_scan_error(self):
         missing = FIXTURES / "does-not-exist.md"
