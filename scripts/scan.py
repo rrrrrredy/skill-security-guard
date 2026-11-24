@@ -89,47 +89,51 @@ def render_text(reports: list[Report]) -> str:
     return "\n".join(chunks).rstrip()
 
 
-def write_stdout(text: str) -> None:
-    try:
+def write_utf8(text: str) -> None:
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
         sys.stdout.write(text)
-        sys.stdout.write("\n")
-    except UnicodeEncodeError:
-        sys.stdout.buffer.write((text + "\n").encode("utf-8"))
+    else:
+        buffer.write(text.encode("utf-8"))
+
+
+def write_stdout(text: str) -> None:
+    write_utf8(text + "\n")
 
 
 @contextmanager
 def destination(output):
     if output is None:
-        yield sys.stdout
+        yield write_utf8
         return
     temp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
                                        dir=output.parent, suffix=".tmp", delete=False)
     try:
         with temp:
-            yield temp
+            yield temp.write
         os.replace(temp.name, output)
     finally:
         Path(temp.name).unlink(missing_ok=True)
 
 
-def write_rows(rows, stream, fmt):
+def write_rows(rows, write, fmt):
     status = 0
     first = True
     if fmt == "json":
-        stream.write("[")
+        write("[")
     for row in rows:
         if not row["complete"]:
             status = 2
         elif row["rating"] in {"D", "F"}:
             status = max(status, 1)
         if fmt == "json" and not first:
-            stream.write(",\n")
-        stream.write(json.dumps(row, ensure_ascii=stream is sys.stdout))
+            write(",\n")
+        write(json.dumps(row, ensure_ascii=False))
         if fmt == "jsonl":
-            stream.write("\n")
+            write("\n")
         first = False
     if fmt == "json":
-        stream.write("]\n")
+        write("]\n")
     return status
 
 
@@ -151,8 +155,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise ScanError("--output would modify an input package; select a sibling report file")
         if args.census:
             rows = census_rows(inputs, root=root, workers=args.workers or 1, ignored=ignored, options=options)
-            with destination(args.output) as stream:
-                return write_rows(rows, stream, args.format or "jsonl")
+            with destination(args.output) as write:
+                return write_rows(rows, write, args.format or "jsonl")
 
         reports = scan_source(args.input, ignored_rules=ignored, **options)
         if args.format == "json":
@@ -160,8 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             body = render_text(reports)
         if args.output:
-            with destination(args.output) as stream:
-                stream.write(body + "\n")
+            with destination(args.output) as write:
+                write(body + "\n")
         else:
             write_stdout(body)
         return int(any(report.rating in {"D", "F"} for report in reports))
