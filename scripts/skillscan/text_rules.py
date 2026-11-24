@@ -89,6 +89,8 @@ def command_rules(words: list[str], ids: set[str]) -> None:
     paths = [arg for arg in args if not arg.startswith("-")]
     if cmd in {"cp", "mv", "install", "copy-item", "move-item"}:
         paths = paths[-1:]
+    elif cmd == "sed" and any(arg.startswith("-i") or arg.startswith("--in-place") for arg in args):
+        paths = paths[1:]
     elif cmd == "git" and "config" in args and "core.hookspath" in (arg.lower() for arg in args):
         if len(paths) > 2:
             ids.add("M4-HOST-CONFIG-WRITE")

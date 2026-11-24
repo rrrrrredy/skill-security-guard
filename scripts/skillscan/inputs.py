@@ -46,7 +46,10 @@ def decode_file(data: bytes) -> str:
 
 
 def tree_record(tree, name: str, size: int, digest: bytes) -> None:
-    encoded = name.encode("utf-8")
+    try:
+        encoded = name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ScanError("file name is not valid UTF-8") from exc
     tree.update(len(encoded).to_bytes(8, "big"))
     tree.update(encoded)
     tree.update(size.to_bytes(8, "big"))

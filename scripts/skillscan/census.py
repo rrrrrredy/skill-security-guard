@@ -31,7 +31,7 @@ def redact(line: str) -> str:
         return "[redacted]"
     line = EMAIL.sub("[email]", URL.sub("[url]", line))
     line = HOME.sub(lambda m: m[1] + "[user]", line)
-    return "".join(f"\\u{ord(c):04x}" if unicodedata.category(c) in {"Cf", "Cc"} and c != "\t" else c
+    return "".join(f"\\u{ord(c):04x}" if unicodedata.category(c) in {"Cf", "Cc", "Cs"} and c != "\t" else c
                    for c in line)[:320]
 
 

@@ -95,7 +95,7 @@ Issues (5):
 
 - `SKILL.md` or any local text/code file
 - Skill directory containing one or more `SKILL.md` files
-- `.zip`, `.tar`, `.tar.gz` and `.tgz` packages, inspected in memory
+- `.zip` (stored or DEFLATE), `.tar`, `.tar.gz` and `.tgz` packages, inspected in memory
 - `-` for stdin
 - `--text` for inline text
 - Public `http://` or `https://` text URLs, capped by response size and timeout

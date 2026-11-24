@@ -17,6 +17,10 @@ ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz")
 
 
 def member_path(value: str, kind: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ScanError(f"{kind} entry name is not valid UTF-8") from exc
     path = PurePosixPath(value.replace("\\", "/"))
     if (path.is_absolute() or PureWindowsPath(value).drive or ".." in path.parts
             or "\0" in value or any(":" in part for part in path.parts)):
@@ -55,6 +59,10 @@ def read_archive(path: Path, max_bytes: int, max_files: int) -> dict[str, bytes]
                     mode = stat.S_IFMT(info.external_attr >> 16)
                     if mode not in (0, stat.S_IFREG, stat.S_IFDIR) or info.flag_bits & 1:
                         raise ScanError("zip links, special files and encrypted entries are unsupported")
+                    # ZipExtFile bounds inflate output for DEFLATE. Its optional
+                    # BZIP2/LZMA paths can expand a full chunk before checking size.
+                    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                        raise ScanError("unsupported zip compression method; use stored or deflate")
                     if info.is_dir():
                         continue
                     with archive.open(info) as stream:
@@ -87,7 +95,7 @@ def read_archive(path: Path, max_bytes: int, max_files: int) -> dict[str, bytes]
                         raise ScanError("tar member size mismatch")
                     files[key] = data
     except (zipfile.BadZipFile, tarfile.TarError, EOFError, gzip.BadGzipFile, zlib.error,
-            NotImplementedError, UnicodeDecodeError, ValueError) as exc:
+            NotImplementedError, UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ScanError(f"invalid or unsupported {kind} archive") from exc
 
     if not files:

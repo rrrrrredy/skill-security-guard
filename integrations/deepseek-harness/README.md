@@ -70,6 +70,8 @@ pnpm pack --pack-destination .pack
 
 The deterministic full-Harness test additionally needs an installed DSH entry, a packed tarball, Python, and an explicit scratch root:
 
+CI copies the three files from `e2e-runtime/` to a temporary directory and runs `pnpm install --frozen-lockfile` there. The RC6 harness and its Cordis HMR, loader, timer and include services must share the compatible versions in this lock. The fixture is used only by the E2E workflow.
+
 ```bash
 DSH_ENTRY=/absolute/path/to/@deepseek-ai/dsh/lib/bin.js \
 DSH_TARBALL=/absolute/path/to/dsh-skill-security-guard-0.1.0.tgz \

@@ -13,7 +13,7 @@ const copies = [
   ["scripts/scan.sh", "assets/scripts/scan.sh"],
   ...(await readdir(path.join(repositoryRoot, "scripts", "skillscan")))
     .filter((name) => name.endsWith(".py")).sort()
-    .map((name) => [`scripts/skillscan/` + name, `assets/scripts/skillscan/` + name]),
+    .map((name) => ["scripts/skillscan/" + name, "assets/scripts/skillscan/" + name]),
   ["references/detection-rules.md", "assets/references/detection-rules.md"],
   ["LICENSE", "LICENSE"],
 ];

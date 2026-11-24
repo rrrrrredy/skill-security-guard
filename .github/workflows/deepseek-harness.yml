@@ -117,20 +117,8 @@ jobs:
         run: |
           $runtimeRoot = Join-Path $env:RUNNER_TEMP "dsh-runtime"
           New-Item -ItemType Directory $runtimeRoot | Out-Null
-          Push-Location $runtimeRoot
-          pnpm init | Out-Null
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          pnpm `
-            --allow-build='@deepseek-ai/dsh-subprocess-local' `
-            --allow-build='@google/genai' `
-            --allow-build='koffi' `
-            --allow-build='node-pty' `
-            --allow-build='protobufjs' `
-            add --save-exact '@deepseek-ai/dsh@0.1.0-rc.6'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          pnpm ignored-builds
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Pop-Location
+          Copy-Item e2e-runtime/package.json,e2e-runtime/pnpm-workspace.yaml,e2e-runtime/pnpm-lock.yaml $runtimeRoot
+          pnpm --dir $runtimeRoot install --frozen-lockfile
 
       - name: Run deterministic headless Skill E2E
         shell: pwsh

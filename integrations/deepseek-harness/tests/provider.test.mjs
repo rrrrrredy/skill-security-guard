@@ -89,7 +89,7 @@ test("generated assets include every release input", () => {
       "assets/scripts/scan.sh",
       ...readdirSync(path.join(repositoryRoot, "scripts", "skillscan"))
         .filter((file) => file.endsWith(".py"))
-        .map((file) => `assets/scripts/skillscan/` + file),
+        .map((file) => "assets/scripts/skillscan/" + file),
       "assets/references/detection-rules.md",
       "LICENSE",
     ]),

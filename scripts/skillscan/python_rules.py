@@ -35,6 +35,14 @@ class Calls(ast.NodeVisitor):
             self.emit("S2-SENSITIVE-CHAIN", max(self.stages.values()))
 
     def visit_scope(self, node):
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        if isinstance(node, ast.ClassDef):
+            for expression in [*node.bases, *node.keywords]:
+                self.visit(expression)
+        else:
+            self.visit(node.args)
+        self.names[node.name], self.values[node.name] = "", ""
         outer_names, outer_values, outer_stages = self.names, self.values, self.stages
         self.names, self.values, self.stages = self.names.new_child(), self.values.new_child(), {}
         if hasattr(node, "args"):
@@ -182,7 +190,7 @@ class Calls(ast.NodeVisitor):
 
     def process_call(self, node, fn):
         first = self.argument(node, 0, "args")
-        shell_arg = self.argument(node, len(node.args), "shell")
+        shell_arg = next((arg.value for arg in node.keywords if arg.arg == "shell"), None)
         shell = fn in {"os.system", "os.popen"} or (isinstance(shell_arg, ast.Constant) and shell_arg.value is True)
         if isinstance(first, (ast.Tuple, ast.List)):
             argv = [self.value(item) for item in first.elts]
