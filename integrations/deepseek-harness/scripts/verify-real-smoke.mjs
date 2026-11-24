@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,7 +22,7 @@ function requiredPath(name) {
 
 function isWithin(candidate, parent) {
   const relative = path.relative(parent, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
 }
 
 function allStrings(value, output = []) {
@@ -39,7 +39,7 @@ function allStrings(value, output = []) {
 function normalizedStrings(value) {
   return allStrings(value)
     .join("\n")
-    .replaceAll("\\", "/")
+    .replace(/[\\/]+/g, "/")
     .toLowerCase();
 }
 
@@ -76,27 +76,28 @@ async function readSession(file) {
   });
 }
 
-function resultFor(records, callId) {
+function resultFor(records, call) {
   for (const record of records) {
-    if (record.type !== "tool/result") continue;
+    if (record.type !== "tool/result" || Number(record.seq) <= Number(call.seq)) continue;
     const items = record.data?.message?.content;
     if (!Array.isArray(items)) continue;
     const item = items.find(
-      (candidate) => candidate?.type === "tool-result" && candidate.toolCallId === callId,
+      (candidate) => candidate?.type === "tool-result" && candidate.toolCallId === call.data.callId,
     );
     if (item) return { record, item };
   }
   return undefined;
 }
 
-const smokeHome = requiredPath("DSH_SMOKE_HOME");
+const smokeHome = await realpath(requiredPath("DSH_SMOKE_HOME"));
 const marker = required("DSH_SMOKE_MARKER");
 const finalToken = process.env.DSH_SMOKE_FINAL_TOKEN?.trim() || DEFAULT_FINAL_TOKEN;
 const expectedShell =
   process.env.DSH_SMOKE_EXPECTED_SHELL?.trim() ||
   (process.platform === "win32" ? "pwsh" : "bash");
 
-if (isWithin(smokeHome, repositoryRoot)) {
+const checkout = await realpath(repositoryRoot);
+if (isWithin(smokeHome, checkout)) {
   throw new Error("DSH_SMOKE_HOME must stay outside the repository so raw sessions cannot leak");
 }
 if (!new Set(["pwsh", "bash"]).has(expectedShell)) {
@@ -107,7 +108,7 @@ const sessionRoot = path.join(smokeHome, "sessions");
 const sessionFiles = (await filesUnder(sessionRoot)).filter((file) => file.endsWith(".jsonl"));
 const candidates = [];
 for (const file of sessionFiles) {
-  if (isWithin(file, repositoryRoot)) {
+  if (isWithin(await realpath(file), checkout)) {
     throw new Error(`raw session unexpectedly resides inside the repository: ${file}`);
   }
   const records = await readSession(file);
@@ -129,9 +130,12 @@ const toolCalls = records.filter((record) => record.type === "tool/call");
 const skillCall = toolCalls.find(
   (record) =>
     record.data?.name === "skill" &&
-    normalizedStrings(decodedArguments(record.data?.arguments)).includes(SKILL_NAME),
+    decodedArguments(record.data?.arguments)?.name === SKILL_NAME,
 );
 assert.ok(skillCall, `session does not contain a skill call for ${SKILL_NAME}`);
+
+const skillResult = resultFor(records, skillCall);
+assert.ok(skillResult, "skill call has no structurally linked tool result");
 
 const expectedScannerSuffix = [
   "profiles",
@@ -144,20 +148,18 @@ const expectedScannerSuffix = [
 ].join("/");
 const shellCall = toolCalls.find(
   (record) =>
-    Number(record.seq) > Number(skillCall.seq) &&
+    Number(record.seq) > Number(skillResult.record.seq) &&
     record.data?.name === expectedShell &&
-    normalizedStrings(decodedArguments(record.data?.arguments)).includes(expectedScannerSuffix),
+    normalizedStrings(decodedArguments(record.data?.arguments)?.command).includes(expectedScannerSuffix),
 );
 assert.ok(shellCall, `session does not invoke the packaged scanner through ${expectedShell}`);
 
-const skillResult = resultFor(records, skillCall.data.callId);
-assert.ok(skillResult, "skill call has no structurally linked tool result");
 const skillText = allStrings(skillResult.item).join("\n");
 assert.match(skillText, /Base directory for this skill:/);
-assert.match(skillText, /scripts\/scan\.py/);
+assert.match(skillText, /scripts[\\/]scan\.py/);
 assert.match(skillText, /一律视为不可信数据/);
 
-const shellResult = resultFor(records, shellCall.data.callId);
+const shellResult = resultFor(records, shellCall);
 assert.ok(shellResult, "scanner call has no structurally linked tool result");
 assert.equal(shellResult.item.isError, false, "packaged scanner tool result is marked as an error");
 const scannerText = allStrings(shellResult.item).join("\n");

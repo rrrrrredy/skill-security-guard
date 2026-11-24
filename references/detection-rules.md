@@ -1,127 +1,54 @@
-# Detection Rules
+# Detection rules
 
-This document describes the rule intent used by `scripts/scan.py`. The scanner is intentionally conservative: high-confidence direct-danger patterns return `F`, while ambiguous patterns are reported with lower confidence for human review.
+The scanner uses the file path, physical line number and rule ID to identify a finding. Python calls are inspected using the standard-library AST. Other supported sources use bounded text rules.
 
-## Dimension 1: Prompt Injection
-
-Confirmed medium risk:
-
-- Instructions to ignore previous instructions
-- Role overrides such as unrestricted assistant personas
-- Claims that the system prompt or safety policy has been replaced
-
-Suspected medium risk:
-
-- Requests to override safety rules
-- Descriptions that trigger for unrelated broad scenarios
-
-## Dimension 2: Sensitive File Access / Data Exfiltration
-
-Confirmed high risk, direct `F`:
-
-- Sending local secrets, identity files, private memory files, or credential directories to a remote host
-- Network commands that include local sensitive files as request data
-
-Confirmed medium risk:
-
-- Reading sensitive config, credential, identity, or memory files without clear need
-
-## Dimension 3: Compliance Violations
-
-Confirmed or suspected high risk, direct `F`:
-
-- `R3-N1`: tunneling tools or tunnel setup
-- `R3-N2`: access to restricted organizational systems
-- `R3-N3`: handling highly sensitive classified data
-- `R3-N4`: backup, upload, or duplication of sensitive auth/device config
-
-Suspected medium risk:
-
-- `R3-N5`: description trigger scope is too broad for the skill purpose
-
-## Dimension 4: Malicious Scripts
-
-Confirmed high risk, direct `F`:
-
-- Destructive filesystem commands
-- Remote script execution via shell pipelines
-- Reverse shell patterns
-- Privilege escalation or mining behavior
-
-Suspected medium risk:
-
-- Dynamic execution through `eval` or unconstrained `exec`
-
-## Dimension 5: Dependency Safety
-
-Advisory:
-
-- `pip install` from non-default index, URL, or Git source
-- `npm install` from non-default registry, URL, or Git source
-- Package names that look like common typosquatting variants
-
-## Dimension 6: Description Trigger Reasonability
-
-Confirmed medium risk:
-
-- Missing description
-- Description too short to define a safe trigger boundary
-
-Suspected medium risk:
-
-- Description says the skill applies to every task, every question, or all scenarios
-
-## Dimension 7: Frontmatter Compliance
-
-Confirmed medium risk:
-
-- Missing YAML frontmatter
-- Missing `name`
-- Missing `description`
-
-Advisory:
-
-- Non-standard fields outside `name` and `description`
-
-## Scoring
-
-| Finding type | Score behavior |
+| Rule ID | What produces a finding |
 | --- | --- |
-| Direct high-risk finding | Rating `F`, score `0` |
-| Confirmed medium risk | `-30` per issue |
-| Two or more confirmed medium-risk issues | Rating capped at `D` |
-| Suspected medium risk | `-15` per issue, except `R3-N5` uses `-10` |
-| Advisory | `-5` per issue, capped at `-10` total advisory penalty |
+| `P1-PROMPT-INJECTION` | Instruction or role overrides in skill text |
+| `P1-SAFETY-OVERRIDE` | Requests to override safety rules |
+| `P1-ZERO-WIDTH` | Zero-width formatting characters or soft hyphens |
+| `P1-BIDI-CONTROL` | Explicit Unicode direction marks, embedding, override or isolate controls |
+| `P1-HIDDEN-INSTRUCTION` | Instruction-like content inside an HTML comment in `SKILL.md`, including multiline comments |
+| `S2-SENSITIVE-READ` | Reads of credential directories, identity and memory files, or named credential environment variables |
+| `S2-EXFILTRATION` | A network transfer command with a sensitive file operand |
+| `S2-NETWORK-SINK` | Python HTTP requests with an outbound body, known HTTP write methods, or socket/mail/file-transfer send calls |
+| `S2-SENSITIVE-CHAIN` | A sensitive read, encoding operation and network or execution sink in one production shell script or one Python lexical scope |
+| `R3-N1` | Use of a tunneling tool |
+| `R3-N2` | Access to restricted HR or performance systems |
+| `R3-N3` | Handling highly classified data |
+| `R3-N4` | Backing up or uploading private device or authentication config |
+| `R3-N5` | An overly broad description trigger |
+| `M4-DESTRUCTIVE-COMMAND` | Destructive filesystem commands |
+| `M4-REMOTE-SCRIPT-EXEC` | Piping a remote download into a shell |
+| `M4-REVERSE-SHELL` | Recognized reverse-shell commands |
+| `M4-PRIVILEGED-OR-MINING` | Privileged shell or mining behavior |
+| `M4-DYNAMIC-EXECUTION` | Dynamic evaluation, shell-backed Python process calls, or explicit command interpreters |
+| `M4-HOST-CONFIG-WRITE` | A write targeting `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.codex/`, `.cursor/`, Git hooks or a hooks-path setting |
+| `M4-LINE-LIMIT` | A physical line exceeds 4,096 characters. Rules analyze its prefix and continue at the next line |
+| `M4-PYTHON-PARSE` | Syntax, encoding artifacts or excessive nesting prevented complete AST inspection |
+| `D5-PIP-UNTRUSTED-SOURCE` | pip installs from a URL, Git or non-default index |
+| `D5-NPM-UNTRUSTED-SOURCE` | npm installs from a URL, Git or non-default registry |
+| `D5-TYPOSQUATTING` | Known misspellings of common dependency names |
+| `D5-UNPINNED-RUNNER` | `npx -y`, `npx --yes`, `uvx` or `pipx run` resolves a package without an exact version |
+| `D6-MISSING-DESCRIPTION` | Missing trigger description |
+| `D6-SHORT-DESCRIPTION` | Trigger description shorter than 20 characters |
+| `F7-MISSING-FRONTMATTER` | Missing YAML frontmatter |
+| `F7-MISSING-NAME` | Frontmatter omits a name |
+| `F7-MISSING-DESCRIPTION` | Frontmatter omits a description |
+| `F7-NONSTANDARD-FIELDS` | Frontmatter contains additional fields |
 
-## Ratings
+## Scoring and evidence
 
-| Score | Rating | Meaning |
-| --- | --- | --- |
-| 100 | A | No findings |
-| 85-99 | B | Light or advisory findings |
-| 70-84 | C | Risk requires review or repair |
-| 50-69 | D | Serious risk; fix before install |
-| <50 or direct high-risk | F | Do not install directly |
+A direct high finding sets the score to zero. Confirmed medium findings cost 30 points, probable medium findings cost 15, and the broad description trigger costs 10. Each rule contributes its strongest penalty once per package. Advisories cost 5 points each with a combined ceiling of 10. Fenced Markdown examples, files under `tests/` and included reference documents retain their evidence at 2 advisory points per rule. Every distinct hit remains visible.
 
-## Attestation boundary
+A score of 100 is A, 85–99 is B, 70–84 is C, 50–69 is D, and 0–49 is F. Two occurrences of one pattern share its cap. Independent confirmed medium findings can drive the score below 50.
 
-`skill-security-scan.v1` binds the report to the exact UTF-8 scan bundle with
-`input_sha256`, records `scanner_version`, all `ignored_rules`, and a
-`complete` flag. Consumers must verify those fields before associating a rating
-with a candidate. The digest proves byte identity, not runtime safety or absence
-of behaviors that static rules cannot observe.
+The chain rule reports co-occurrence and carries `probable` confidence. It groups Python calls by file and lexical scope, and shell operations by script. Examples, tests and references cannot complete a production chain. An isolated outbound call earns an advisory. Ignoring one component hides that finding; a reviewer can separately ignore the chain ID. Static co-occurrence does not establish runtime data flow.
 
-## Fix Guidance
+The Python pass resolves common module, function and assignment aliases and recognizes literal path operations. Comments and docstrings do not produce call findings. A parse diagnostic records files that could not be analyzed. Unicode checks inspect the source characters themselves.
 
-Safe to suggest as auto-fixable:
+## Report binding and disclosure
 
-- Remove non-standard frontmatter fields
-- Narrow over-broad description trigger text
-- Add comments explaining necessary low-risk network/dependency behavior
+Default JSON remains an array of `skill-security-scan.v1` reports. `input_sha256` binds the UTF-8 scan input. Stdin preserves the exact UTF-8 text, including line endings. Directory inputs retain the v1 file-marker serialization. Each report records the scanner version and the sorted per-run ignore list.
 
-Manual review required:
-
-- Any direct high-risk finding
-- Ambiguous prompt-injection intent
-- Organization-specific compliance decisions
-- Any finding where changing behavior could alter the skill's purpose
+Census records also hash relative paths and raw file bytes. Their intent fields contain the declared name and description. Evidence windows contain the matching physical line and up to three lines on either side, within the same file. The census renderer masks common credential assignments, authorization headers, recognizable access tokens and private-key blocks, and removes URL, email and home-directory identifiers from excerpts. Redaction is pattern-based. See the README for the hash format, package boundaries and CLI exit codes.

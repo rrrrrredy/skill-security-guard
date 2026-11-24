@@ -1,0 +1,16 @@
+# Match the Cordis ABI shipped with DSH RC6 and the Bundle's provider lock.
+overrides:
+  '@deepseek-ai/cordis': 4.0.1
+  '@deepseek-ai/cordis-plugin-hmr': 1.0.16
+  '@deepseek-ai/cordis-plugin-include': 1.0.6
+  '@deepseek-ai/cordis-plugin-loader': 1.0.2
+  '@deepseek-ai/cordis-plugin-timer': 1.1.3
+  '@deepseek-ai/cosmokit': 1.8.2
+  '@deepseek-ai/schemastery': 3.18.1
+
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  koffi: true
+  node-pty: true
+  protobufjs: true

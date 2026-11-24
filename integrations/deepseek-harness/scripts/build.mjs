@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,9 @@ const copies = [
   ["SKILL.md", "assets/SKILL.md"],
   ["scripts/scan.py", "assets/scripts/scan.py"],
   ["scripts/scan.sh", "assets/scripts/scan.sh"],
+  ...(await readdir(path.join(repositoryRoot, "scripts", "skillscan")))
+    .filter((name) => name.endsWith(".py")).sort()
+    .map((name) => ["scripts/skillscan/" + name, "assets/scripts/skillscan/" + name]),
   ["references/detection-rules.md", "assets/references/detection-rules.md"],
   ["LICENSE", "LICENSE"],
 ];

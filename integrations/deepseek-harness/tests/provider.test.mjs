@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,9 @@ test("generated assets include every release input", () => {
       "assets/SKILL.md",
       "assets/scripts/scan.py",
       "assets/scripts/scan.sh",
+      ...readdirSync(path.join(repositoryRoot, "scripts", "skillscan"))
+        .filter((file) => file.endsWith(".py"))
+        .map((file) => "assets/scripts/skillscan/" + file),
       "assets/references/detection-rules.md",
       "LICENSE",
     ]),
