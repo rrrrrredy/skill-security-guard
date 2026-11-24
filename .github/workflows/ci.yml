@@ -6,6 +6,18 @@ permissions:
   contents: read
 
 jobs:
+  census-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install census-only dependencies
+        run: python -m pip install --disable-pip-version-check -r census/requirements.txt
+      - name: Run offline collector and audit queue tests
+        run: python -m unittest discover -s census/tests -p "test_*.py" -v
+
   test:
     name: Core and schemas (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}

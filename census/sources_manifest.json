@@ -1,0 +1,14 @@
+{
+  "tier1_official": ["anthropics/skills", "openai/skills", "anthropics/claude-plugins-official"],
+  "tier2_registry": [
+    {"repo": "VoltAgent/awesome-agent-skills", "indexes": ["README.md"], "directories": []},
+    {"repo": "ComposioHQ/awesome-claude-skills", "indexes": ["README.md"], "directories": []},
+    {"repo": "github/awesome-copilot", "indexes": [], "directories": ["skills"]}
+  ],
+  "tier3_wild_github": {
+    "queries": ["filename:SKILL.md fork:true"],
+    "min_bytes": 0,
+    "max_bytes": 393215,
+    "path_prefixes": [".claude/skills", ".agents/skills", ".codex/skills", "skills/"]
+  }
+}
