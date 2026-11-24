@@ -44,7 +44,7 @@ JSON output:
 python scripts/scan.py path/to/skill-directory --format json
 ```
 
-Every emitted report is a deterministic `skill-security-scan.v1` attestation.
+Default JSON emits an array of deterministic `skill-security-scan.v1` attestations.
 It includes the scanner version, SHA-256 of the exact scanned UTF-8 bundle,
 the sorted per-run ignore list, and `complete: true`. A downstream release or
 impact ledger should reject a report whose `input_sha256` does not match the
@@ -62,7 +62,7 @@ Safe skill:
 
 ```text
 Skill Security Report: safe-skill
-Scanner: 5.2.1 (skill-security-scan.v1)
+Scanner: 5.3.0 (skill-security-scan.v1)
 Input SHA-256: sha256:<64 lowercase hex characters>
 Complete: true
 Rating: A (100/100)
@@ -95,19 +95,32 @@ Issues (5):
 
 - `SKILL.md` or any local text/code file
 - Skill directory containing one or more `SKILL.md` files
-- `.zip` packages, extracted with path traversal checks and size/file-count limits
+- `.zip`, `.tar`, `.tar.gz` and `.tgz` packages, inspected in memory
 - `-` for stdin
 - `--text` for inline text
 - Public `http://` or `https://` text URLs, capped by response size and timeout
 
-Directory and zip scans include `SKILL.md` and files under `scripts/` by default. Reference docs are skipped to reduce false positives; use `--include-references` when you explicitly want to scan reference markdown too.
+Package scans include `SKILL.md`, supported files under `scripts/` and `tests/`, and executable source files elsewhere in the package. Use `--include-references` to include reference Markdown. Archives reject absolute paths, traversal, links, conflicting entries and special files. The defaults are 500 members and 10 MiB each for the compressed input and the combined member contents. TAR framing and extension metadata have a separate bounded allowance. Local scans reject file links leaving their individual skill root and directory links. Local text files decode with replacement for invalid bytes. Stdin remains strict UTF-8.
+
+## Package census
+
+```bash
+python scripts/scan.py --batch-dir packages --workers 4 --format jsonl --output census.jsonl
+python scripts/scan.py path/to/skill --extract-intent-context
+```
+
+Each JSONL record conforms to `schemas/skill-security-scan.v2-census.schema.json`. A directory, archive or standalone input can opt in with `--format jsonl` or `--extract-intent-context`. Batch mode defaults to JSONL. Explicit `--format json` in census mode writes an array of the same records. Place `--output` outside the input packages. Files use UTF-8 and are replaced after the scan finishes.
+
+A successful row contains a batch-relative POSIX source path, scanner version, both digests, declared name and description, and redacted ±3-line context on each finding. Rows are emitted in stable package order for all worker counts. An unreadable or rejected package produces a `complete: false` error row and scanning continues. Exit 0 means every rating is A–C, 1 means at least one D/F, and 2 means an input or output error occurred.
+
+`canonical_tree_sha256` sorts package-relative POSIX paths in UTF-8 order. For each file it hashes an eight-byte big-endian path length, the path bytes, an eight-byte big-endian content length, and the 32 raw bytes of that file's SHA-256. The final value is `sha256:` plus the lowercase hex digest. This includes binary assets and unselected references. Archive wrappers, file order, timestamps and permissions do not affect it. Nested skill packages have their own boundaries; test fixture skills are excluded from their parent. VCS data, `node_modules`, virtual environments and Python caches are excluded. Internal file symlinks contribute their logical path and target bytes.
 
 ## Requirements
 
 - Python 3.10+
 - No runtime package dependencies
 
-The scanner CI job tests Python 3.11 and 3.12 on Ubuntu. The DeepSeek Harness Bundle job tests Node.js 22.19 and 24 on both Ubuntu and Windows with Python 3.11.
+Every push and pull request runs the core tests with site packages disabled and validates emitted records against both schemas on Ubuntu and Windows with Python 3.10, 3.11 and 3.12. The JSON Schema validator is a CI-only dependency. Bundle inputs additionally trigger the DeepSeek Harness provider and headless tests.
 
 ## DeepSeek Harness
 

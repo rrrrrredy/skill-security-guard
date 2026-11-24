@@ -68,9 +68,9 @@ bash scripts/scan.sh <path>
 
 ## 扫描流程
 
-1. 解析输入：本地文件、目录、zip、stdin、inline text、公开文本 URL。
-2. zip 输入使用安全解压：拒绝路径穿越、过大文件和过多条目。
-3. 目录和 zip 默认扫描 `SKILL.md` 与 `scripts/` 下的代码文件；`references/` 默认跳过，避免规则说明造成误报。
+1. 解析本地文件、目录、ZIP、TAR、stdin、inline text 或公开文本 URL。
+2. 在内存中检查归档条目，限制条目数量和总展开字节数，拒绝越界路径和链接。
+3. 扫描 `SKILL.md`、脚本和测试。围栏示例与测试保留低权重证据，`--include-references` 可纳入参考文档。
 4. 加载内置规则执行 7 维检测：
    - Prompt injection
    - Sensitive file access / data exfiltration
@@ -84,6 +84,8 @@ bash scripts/scan.sh <path>
 JSON 报告使用 `skill-security-scan.v1`。将它交给 Impact Ledger 等外部消费者时，必须核对 `input_sha256` 与候选 Skill 精确内容一致，并拒绝 `complete` 不为 `true` 的报告。评级本身不能替代该绑定。
 
 ## 评级
+
+普查时可运行 `python scripts/scan.py --batch-dir packages --workers 4 --output census.jsonl`。单包可用 `--extract-intent-context` 获取同一 v2 格式。普查报告含原始文件树摘要、声明意图和脱敏证据切片。默认单包文本和 `--format json` 继续使用 v1 契约。
 
 | 评级 | 含义 |
 | --- | --- |

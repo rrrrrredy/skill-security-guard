@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,9 @@ const requiredDestinations = new Set([
   "assets/SKILL.md",
   "assets/scripts/scan.py",
   "assets/scripts/scan.sh",
+  ...(await readdir(path.join(repositoryRoot, "scripts", "skillscan")))
+    .filter((name) => name.endsWith(".py"))
+    .map((name) => `assets/scripts/skillscan/` + name),
   "assets/references/detection-rules.md",
   "LICENSE",
 ]);
@@ -36,6 +39,13 @@ for (const record of manifest.files) {
     throw new Error(`Unexpected or duplicate manifest destination: ${record.destination}`);
   }
   seen.add(record.destination);
+
+  const expectedSource = record.destination === "lib/index.js"
+    ? "src/index.js"
+    : record.destination.replace(/^assets\//, "");
+  if (record.source !== expectedSource) {
+    throw new Error(`Incorrect canonical source for ` + record.destination);
+  }
 
   const [source, destination] = await Promise.all([
     readFile(sourcePath(record.source)),
