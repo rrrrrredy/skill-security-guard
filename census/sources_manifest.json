@@ -6,7 +6,7 @@
     {"repo": "github/awesome-copilot", "indexes": [], "directories": ["skills"]}
   ],
   "tier3_wild_github": {
-    "queries": ["filename:SKILL.md fork:false"],
+    "queries": ["filename:SKILL.md"],
     "min_bytes": 0,
     "max_bytes": 393215,
     "path_prefixes": [".claude/skills", ".agents/skills", ".codex/skills", "skills/"]

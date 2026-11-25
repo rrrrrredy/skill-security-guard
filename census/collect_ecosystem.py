@@ -16,7 +16,7 @@ from urllib.parse import quote
 from zipfile import BadZipFile
 
 from collection_state import (TIERS, Checkpoints, add_repo, add_shard, canonicalize, initialize,
-                              progress, save_snapshot)
+                              progress, save_snapshot, without_fork_qualifier)
 from corpus_layout import buckets
 from github_source import GitHub, repository_name
 from package_store import BulkMirror, InvalidPackage, capture
@@ -34,6 +34,7 @@ def read_manifest(path):
             if PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts or "\\" in path:
                 raise ValueError("registry selectors must be repository-relative POSIX paths")
     wild = data[TIERS[2]]
+    wild["queries"] = [without_fork_qualifier(q) for q in wild["queries"]]
     if not 0 <= wild["min_bytes"] <= wild["max_bytes"]:
         raise ValueError("invalid search byte range")
     for query in wild["queries"]:

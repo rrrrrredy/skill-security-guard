@@ -87,6 +87,8 @@ class MockHub:
         if path == "/search/code":
             q, page = params["q"][0], int(params["page"][0])
             self.calls[q, page] += 1
+            if "fork:false" in q.lower().split():
+                return 422, {}, {"message": "Unsupported fork qualifier"}
             result = self.search(q, page)
             return result if isinstance(result, tuple) else (200, {}, result)
         parts = path.strip("/").split("/")
@@ -126,7 +128,7 @@ class Pipeline(unittest.TestCase):
         self.manifest.write_text(json.dumps({
             "tier1_official": list(official), "tier2_registry": list(registries),
             "tier3_wild_github": {
-                "queries": ["filename:SKILL.md fork:false"] if query else [], "min_bytes": size[0],
+                "queries": ["filename:SKILL.md"] if query else [], "min_bytes": size[0],
                 "max_bytes": size[1], "path_prefixes": [".claude/skills", ".agents/skills", ".codex/skills", "skills/"]
             }
         }), encoding="utf-8")
@@ -346,8 +348,7 @@ class Pipeline(unittest.TestCase):
         trusted = {"official/large", "registry/large"}
         self.config(["official/large"], [{"repo": "registry/large", "indexes": [], "directories": []}], query=True)
         public_manifest = json.loads((ROOT / "census/sources_manifest.json").read_bytes())
-        self.assertTrue(all("fork:false" in q.split() and "fork:true" not in q.split()
-                            for q in public_manifest["tier3_wild_github"]["queries"]))
+        self.assertEqual(public_manifest["tier3_wild_github"]["queries"], ["filename:SKILL.md"])
         self.hub.forks = trusted | {"wild/fork"}
         repos = ["wild/bulk", "wild/fork", "wild/boundary", *sorted(trusted)]
         for name in repos:
@@ -365,7 +366,8 @@ class Pipeline(unittest.TestCase):
         with patch.object(zipfile.ZipFile, "open", open_member):
             self.assertEqual(self.collect(), 0)
         queries = [key[0] for key in self.hub.calls if isinstance(key, tuple)]
-        self.assertTrue(queries and all("fork:false" in query for query in queries))
+        self.assertEqual(queries, ["filename:SKILL.md size:1..4"])
+        self.assertEqual(self.hub.calls["/repos/wild/fork"], 1)
         self.assertEqual(self.hub.calls["/repos/wild/fork/commits/main"], 0)
         self.assertEqual(self.hub.calls[f"/repos/wild/fork/zipball/{self.hub.repos['wild/fork'][0]}"], 0)
         with closing(sqlite3.connect(self.db)) as con:
@@ -377,6 +379,23 @@ class Pipeline(unittest.TestCase):
         previous = self.hub.calls.copy()
         self.assertEqual(self.collect(), 0)
         self.assertEqual(self.hub.calls, previous)
+
+    def test_resume_sharded_checkpoint_after_search_422(self):
+        self.config(["org/pinned"], query=True)
+        sha = self.hub.repo("org/pinned", {"SKILL.md": skill("pinned")})
+        old = json.loads(self.manifest.read_bytes())
+        old_query = "filename:SKILL.md fork:false"
+        old["tier3_wild_github"]["queries"] = [old_query]
+        self.manifest.write_text(json.dumps(old), encoding="utf-8")
+        self.assertEqual(self.collect(), 0)
+        self.config(["org/pinned"], query=True)
+        with closing(sqlite3.connect(self.db)) as db, db:
+            db.execute("UPDATE meta SET value=? WHERE key='manifest_sha256'",
+                       (hashlib.sha256(json.dumps(old, sort_keys=True).encode()).hexdigest(),))
+            db.execute("UPDATE shards SET query=?,status='pending',page=1", (old_query,))
+        self.assertEqual(self.collect(), 0)
+        self.assertEqual(self.hub.calls["filename:SKILL.md size:1..4", 1], 2)
+        self.assertEqual(self.hub.calls[f"/repos/org/pinned/zipball/{sha}"], 1)
 
     def test_old_checkpoint_restores_pinned_trees_and_rechecks_wild_policy(self):
         self.config(["official/pin"], query=True)

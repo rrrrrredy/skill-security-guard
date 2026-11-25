@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 
@@ -74,6 +75,12 @@ def fingerprint(manifest):
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
 
+def without_fork_qualifier(query, *, flat_checkpoint=False):
+    values = "true|false" if flat_checkpoint else "false"
+    cleaned, removed = re.subn(rf"(?<!\S)fork:(?:{values})(?:\s+|$)", "", query, flags=re.I)
+    return cleaned.rstrip() if removed else query
+
+
 def initialize(db, manifest, packages, wild_limit):
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
@@ -82,11 +89,17 @@ def initialize(db, manifest, packages, wild_limit):
         legacy = "manifest_sha256" in settings and "package_layout" not in settings
         current = fingerprint(manifest)
         wild = manifest[TIERS[2]]
-        old_queries = [q.replace("fork:false", "fork:true") for q in wild["queries"]]
-        old_manifest = {**manifest, TIERS[2]: {**wild, "queries": old_queries}}
-        if settings.get("manifest_sha256", current) != current and not (
-                legacy and settings["manifest_sha256"] == fingerprint(old_manifest)):
-            raise ValueError("state database belongs to a different manifest")
+        if settings.get("manifest_sha256", current) != current:
+            # Root shards retain the original manifest's query order, even after splitting.
+            old_queries = [r[0] for r in db.execute("""SELECT query FROM shards WHERE lo=? AND hi=?
+                AND prefix='' AND status!='superseded' ORDER BY id""", (wild["min_bytes"], wild["max_bytes"]))]
+            old_manifest = {**manifest, TIERS[2]: {**wild, "queries": old_queries}}
+            queries = [q if q in wild["queries"] else without_fork_qualifier(q, flat_checkpoint=legacy)
+                       for q in old_queries]
+            if queries != wild["queries"] or fingerprint(old_manifest) != settings["manifest_sha256"]:
+                raise ValueError("state database belongs to a different manifest")
+            for obsolete in set(old_queries) - set(wild["queries"]):
+                db.execute("UPDATE shards SET status='superseded' WHERE query=?", (obsolete,))
         if settings.get("max_skills_per_wild_repo", str(wild_limit)) != str(wild_limit):
             raise ValueError("resume with the recorded --max-skills-per-wild-repo, or use a fresh corpus and state")
         if legacy:
@@ -97,8 +110,6 @@ def initialize(db, manifest, packages, wild_limit):
             # Old completed snapshots recorded one package or rejection for every discovered root.
             db.execute("""UPDATE repos SET skill_count=(SELECT count(*) FROM packages WHERE repo=repos.name)
                         + (SELECT count(*) FROM rejections WHERE repo=repos.name),status='pending' WHERE status='done'""")
-            for obsolete in set(old_queries) - set(wild["queries"]):
-                db.execute("UPDATE shards SET status='superseded' WHERE query=?", (obsolete,))
         db.executemany("INSERT OR REPLACE INTO meta VALUES(?,?)", [
             ("manifest_sha256", current), ("package_layout", "sha256-256"),
             ("max_skills_per_wild_repo", str(wild_limit))])
