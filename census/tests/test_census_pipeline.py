@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 import zipfile
@@ -42,6 +43,7 @@ def snapshot(files):
 class MockHub:
     def __init__(self):
         self.repos = {}
+        self.forks = set()
         self.calls = Counter()
         self.search = lambda query, page: {"total_count": 0, "incomplete_results": False, "items": []}
         self.faults = []
@@ -93,7 +95,7 @@ class MockHub:
             return 404, {}, {"message": "Not Found"}
         sha, data = self.repos[name]
         if len(parts) == 3:
-            return 200, {}, {"full_name": name, "private": False, "default_branch": "main",
+            return 200, {}, {"full_name": name, "fork": name in self.forks, "private": False, "default_branch": "main",
                              "stargazers_count": 17, "license": {"spdx_id": "MIT"}}
         if parts[3:] == ["commits", "main"]:
             return 200, {}, {"sha": sha}
@@ -124,16 +126,16 @@ class Pipeline(unittest.TestCase):
         self.manifest.write_text(json.dumps({
             "tier1_official": list(official), "tier2_registry": list(registries),
             "tier3_wild_github": {
-                "queries": ["filename:SKILL.md fork:true"] if query else [], "min_bytes": size[0],
+                "queries": ["filename:SKILL.md fork:false"] if query else [], "min_bytes": size[0],
                 "max_bytes": size[1], "path_prefixes": [".claude/skills", ".agents/skills", ".codex/skills", "skills/"]
             }
         }), encoding="utf-8")
 
-    def collect(self):
+    def collect(self, *extra):
         args = ["--manifest", str(self.manifest), "--output-dir", str(self.out), "--state-db", str(self.db),
                 "--checkpoint-dir", str(self.ckpt), "--checkpoint-every", "2"]
         with redirect_stdout(io.StringIO()):
-            return collector.main(args, github=GitHub(self.hub.url))
+            return collector.main([*args, *extra], github=GitHub(self.hub.url))
 
     def test_rate_limits_wait_for_primary_secondary_and_proactive_exhaustion(self):
         now = [1000.0]
@@ -178,7 +180,7 @@ class Pipeline(unittest.TestCase):
         self.hub.search = search
         self.assertNotEqual(self.collect(), 0)
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(len(list((self.out / "packages").glob("*/SKILL.md"))), 3)
+        self.assertEqual(len(list((self.out / "packages").glob("*/*/SKILL.md"))), 3)
         self.assertEqual(len(list((self.out / "packages").rglob("SKILL.md"))), 3)
         self.assertEqual(self.hub.calls[f"/repos/org/one/zipball/{sha}"], 1)
         queries = {key[0] for key in self.hub.calls if isinstance(key, tuple)}
@@ -196,7 +198,7 @@ class Pipeline(unittest.TestCase):
         shutil.copyfile(self.ckpt / "latest.sqlite3", self.db)
         self.out = self.root / "new-session"
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(len(list((self.out / "packages").glob("*/SKILL.md"))), 3)
+        self.assertEqual(len(list((self.out / "packages").glob("*/*/SKILL.md"))), 3)
         self.assertEqual(self.hub.calls["/repos/org/one/commits/main"], 1)
 
     def test_single_byte_saturation_uses_prefixes_and_records_coverage_gap(self):
@@ -211,7 +213,7 @@ class Pipeline(unittest.TestCase):
             self.assertTrue(any("path:" + prefix in q for q in queries))
         with closing(sqlite3.connect(self.db)) as con:
             self.assertGreater(con.execute("SELECT count(*) FROM shards WHERE status='partial'").fetchone()[0], 0)
-        self.assertEqual(len(list((self.out / "packages").glob("*/SKILL.md"))), 2)
+        self.assertEqual(len(list((self.out / "packages").glob("*/*/SKILL.md"))), 2)
 
     def test_rejects_oversize_and_links_without_publishing_partial_skills(self):
         self.config(["org/mixed"])
@@ -227,7 +229,7 @@ class Pipeline(unittest.TestCase):
             z.writestr(entry, "outside")
         self.hub.repos["org/mixed"] = (sha, buf.getvalue())
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(len(list((self.out / "packages").glob("*/SKILL.md"))), 1)
+        self.assertEqual(len(list((self.out / "packages").glob("*/*/SKILL.md"))), 1)
         with closing(sqlite3.connect(self.db)) as con:
             self.assertEqual(con.execute("SELECT count(*) FROM rejections").fetchone()[0], 2)
 
@@ -244,13 +246,27 @@ class Pipeline(unittest.TestCase):
                                 **{f"a{i}/SKILL.md": skill(f"a{i}") for i in range(5)}})
         self.assertEqual(self.collect(), 0)
         packages = self.out / "packages"
-        (packages / "corrupt.tar").write_bytes(b"invalid tar")
+        bucket = next(packages.iterdir())
+        (bucket / "corrupt.tar").write_bytes(b"invalid tar")
         scan = self.root / "scan.jsonl"
-        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts/scan.py"), "--batch-dir", str(packages),
-                                 "--format", "jsonl", "--output", str(scan)], capture_output=True)
+        result = subprocess.run([sys.executable, "-S", str(ROOT / "census/scan_sharded_corpus.py"),
+                                 "--packages-dir", str(packages), "--workers", "2", "--output", str(scan)],
+                                capture_output=True)
         self.assertEqual(result.returncode, 2, result.stderr)
         rows = scan.read_text(encoding="utf8").splitlines()
         self.assertEqual(sum(not json.loads(line)["complete"] for line in rows), 1)
+        parsed = [json.loads(line) for line in rows]
+        successes = [row for row in parsed if row["complete"]]
+        self.assertEqual(len(successes), 10)
+        self.assertEqual(len({row["canonical_tree_sha256"] for row in successes}), 10)
+        for row in successes:
+            key = row["canonical_tree_sha256"].removeprefix("sha256:")
+            self.assertEqual(row["source"], f"{key[:2]}/{key}")
+            self.assertEqual(row["target"], row["source"])
+        self.assertEqual(next(row["source"] for row in parsed if not row["complete"]), bucket.name + "/corrupt.tar")
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(con.execute("SELECT count(*),count(DISTINCT canonical_tree_sha256) FROM packages")
+                             .fetchone(), (11, 10))
         def build(folder, *options):
             dest = self.root / folder
             cmd = [sys.executable, str(ROOT / "census/build_audit_queue.py"), "--scan-jsonl", str(scan),
@@ -263,6 +279,7 @@ class Pipeline(unittest.TestCase):
         malformed = json.loads((output / "malformed_packages.jsonl").read_bytes())
         self.assertFalse(malformed["complete"])
         trees = [json.loads(s) for s in (output / "lineage_map.jsonl").read_bytes().splitlines()]
+        self.assertEqual(sum(tree["occurrence_count"] for tree in trees), 11)
         clone = next(t for t in trees if t["clone_count"])
         self.assertEqual(clone["clone_count"], 1)
         self.assertEqual({o["repo_full_name"] for o in clone["origins"]}, {"org/a", "org/b"})
@@ -289,3 +306,105 @@ class Pipeline(unittest.TestCase):
         expanded, _ = build("full-b", "--ab-sample-size", "0", "--full-grades", "B")
         full = [json.loads(s) for s in (expanded / "stage2_audit_queue.jsonl").read_bytes().splitlines()]
         self.assertEqual({r["rating"] for r in full}, set("BCDF"))
+
+        # A missing bucket must not silently publish a smaller census over a successful queue.
+        missing = successes[0]["canonical_tree_sha256"]
+        scan.write_text("".join(line + "\n" for line in rows
+                                if json.loads(line).get("canonical_tree_sha256") != missing), encoding="utf8")
+        run = subprocess.run([sys.executable, str(ROOT / "census/build_audit_queue.py"), "--scan-jsonl", str(scan),
+                              "--state-db", str(self.db), "--output-dir", str(output)], capture_output=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn(missing, run.stderr.decode())
+        self.assertEqual(contents, (output / "stage2_audit_queue.jsonl").read_text(encoding="utf8"))
+
+    def test_all_256_digest_prefixes_and_occurrence_preservation(self):
+        self.config(["matrix/official"])
+        by_prefix = {}
+        i = 0
+        while len(by_prefix) < 256:
+            blob = skill(f"bucket-{i}")
+            key = hashlib.sha256((8).to_bytes(8, "big") + b"SKILL.md" + len(blob).to_bytes(8, "big")
+                                 + hashlib.sha256(blob).digest()).hexdigest()
+            by_prefix.setdefault(key[:2], (key, blob))
+            i += 1
+        files = {prefix + "/SKILL.md": blob for prefix, (_, blob) in by_prefix.items()}
+        files["clone/SKILL.md"] = files["00/SKILL.md"]
+        files["annotated/SKILL.md"] = files["00/SKILL.md"]
+        files["annotated/metadata.json"] = b'{"mirror":"extra bytes"}'
+        self.hub.repo("matrix/official", files)
+        self.assertEqual(self.collect(), 0)
+        root = self.out / "packages"
+        self.assertEqual({p.name for p in root.iterdir()}, {f"{b:02x}" for b in range(256)})
+        for prefix, (key, blob) in by_prefix.items():
+            self.assertEqual((root / prefix / key / "SKILL.md").read_bytes(), blob)
+        self.assertEqual(len(list(root.glob("*/*/SKILL.md"))), 257)
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(con.execute("SELECT count(*), count(DISTINCT canonical_tree_sha256) FROM packages")
+                             .fetchone(), (258, 257))
+
+    def test_forks_mirror_preflight_and_trusted_exemptions(self):
+        trusted = {"official/large", "registry/large"}
+        self.config(["official/large"], [{"repo": "registry/large", "indexes": [], "directories": []}], query=True)
+        public_manifest = json.loads((ROOT / "census/sources_manifest.json").read_bytes())
+        self.assertTrue(all("fork:false" in q.split() and "fork:true" not in q.split()
+                            for q in public_manifest["tier3_wild_github"]["queries"]))
+        self.hub.forks = trusted | {"wild/fork"}
+        repos = ["wild/bulk", "wild/fork", "wild/boundary", *sorted(trusted)]
+        for name in repos:
+            n = 500 if name == "wild/boundary" else 501
+            folder = "bulk-only" if name == "wild/bulk" else "tree"
+            self.hub.repo(name, {f"{folder}/{i}/SKILL.md": skill("identical") for i in range(n)})
+        self.hub.search = lambda q, p: {"total_count": len(repos), "incomplete_results": False,
+            "items": [{"path": "tree/0/SKILL.md", "repository": {"full_name": name, "private": False}}
+                      for name in repos]}
+        original_open = zipfile.ZipFile.open
+        def open_member(archive, member, *args, **kwargs):
+            path = member.filename if isinstance(member, zipfile.ZipInfo) else member
+            self.assertNotIn("bulk-only/", path, "mirror quarantine must precede member decompression")
+            return original_open(archive, member, *args, **kwargs)
+        with patch.object(zipfile.ZipFile, "open", open_member):
+            self.assertEqual(self.collect(), 0)
+        queries = [key[0] for key in self.hub.calls if isinstance(key, tuple)]
+        self.assertTrue(queries and all("fork:false" in query for query in queries))
+        self.assertEqual(self.hub.calls["/repos/wild/fork/commits/main"], 0)
+        self.assertEqual(self.hub.calls[f"/repos/wild/fork/zipball/{self.hub.repos['wild/fork'][0]}"], 0)
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(con.execute("SELECT repo_full_name,commit_sha,stars,skill_count FROM bulk_mirrors")
+                             .fetchall(), [("wild/bulk", self.hub.repos["wild/bulk"][0], 17, 501)])
+            self.assertEqual(dict(con.execute("SELECT repo,count(*) FROM packages GROUP BY repo")),
+                             {"wild/boundary": 500, "official/large": 501, "registry/large": 501})
+        self.assertEqual(len(list((self.out / "packages").glob("*/*/SKILL.md"))), 1)
+        previous = self.hub.calls.copy()
+        self.assertEqual(self.collect(), 0)
+        self.assertEqual(self.hub.calls, previous)
+
+    def test_old_checkpoint_restores_pinned_trees_and_rechecks_wild_policy(self):
+        self.config(["official/pin"], query=True)
+        pinned = self.hub.repo("official/pin", {"SKILL.md": skill("pin")})
+        self.hub.repo("wild/old", {f"{i}/SKILL.md": skill("pin") for i in range(3)})
+        self.hub.search = lambda q, p: results(1, p, "wild/old")
+        self.assertEqual(self.collect(), 0)
+        old = json.loads(self.manifest.read_bytes())
+        old["tier3_wild_github"]["queries"] = ["filename:SKILL.md fork:true"]
+        with closing(sqlite3.connect(self.db)) as db, db:
+            db.execute("DELETE FROM meta WHERE key NOT IN ('manifest_sha256','progress')")
+            db.execute("UPDATE meta SET value=? WHERE key='manifest_sha256'",
+                       (hashlib.sha256(json.dumps(old, sort_keys=True).encode()).hexdigest(),))
+            db.execute("UPDATE shards SET query='filename:SKILL.md fork:true'")
+            db.execute("ALTER TABLE repos DROP COLUMN is_fork")
+        self.out = self.root / "restored"
+        self.assertEqual(self.collect("--max-skills-per-wild-repo", "2"), 0)
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(con.execute("SELECT skill_count FROM bulk_mirrors WHERE repo_full_name='wild/old'")
+                             .fetchone(), (3,))
+            self.assertEqual(con.execute("SELECT count(*) FROM packages").fetchone(), (4,))
+        self.assertEqual(self.hub.calls["/repos/official/pin/commits/main"], 1)
+        self.assertEqual(self.hub.calls[f"/repos/official/pin/zipball/{pinned}"], 2)
+        scans, audits = self.root / "scans", self.root / "audits"
+        for command in ([str(ROOT/"census/scan_sharded_corpus.py"), "--packages-dir", str(self.out/"packages"),
+                         "--output", str(scans)],
+                        [str(ROOT/"census/build_audit_queue.py"), "--state-db", str(self.db), "--scan-jsonl",
+                         str(scans), "--output-dir", str(audits)]):
+            subprocess.run([sys.executable, *command], check=True, capture_output=True)
+        lineage = json.loads((audits/"lineage_map.jsonl").read_bytes())
+        self.assertEqual([o["repo_full_name"] for o in lineage["origins"]], ["official/pin"])
