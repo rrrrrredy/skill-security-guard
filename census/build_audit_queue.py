@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
 from collection_state import TIERS
+from corpus_layout import tree_path
 
 SCHEMA = Path(__file__).resolve().parents[1] / "schemas/skill-security-scan.v2-census.schema.json"
 LIMIT = 12000
@@ -41,18 +43,49 @@ def error_type(message):
     return "other"
 
 
-def origin_for(state, source, digest):
-    row = state.execute("""SELECT p.skill_path,p.canonical_tree_sha256,r.name,r.commit_sha,r.stars,r.spdx_license
-        FROM packages p JOIN repos r ON r.name=p.repo WHERE p.source=?""", (source,)).fetchone()
-    if row is None:
-        raise ValueError(f"no collector provenance for {source!r}; scan the collector's packages/ directory")
-    if row["canonical_tree_sha256"] != digest:
-        raise ValueError(f"tree hash differs from the pinned collector inventory for {source!r}")
-    tiers = sorted((r[0] for r in state.execute("SELECT tier FROM repo_tiers WHERE repo=?", (row["name"],))),
-                   key=TIERS.index)
-    return {"source": source, "repo_full_name": row["name"], "commit_sha": row["commit_sha"],
-            "skill_path": row["skill_path"], "stars": row["stars"], "spdx_license": row["spdx_license"],
-            "source_tier": tiers[0], "source_tiers": tiers}
+def source_digest(state, source):
+    parts = source.split("/")
+    if len(parts) == 2 and re.fullmatch("[0-9a-f]{64}", parts[1]) and parts[0] == parts[1][:2]:
+        return "sha256:" + parts[1]
+    if len(parts) == 1 and re.fullmatch("[0-9a-f]{64}", source):
+        # Flat v5.3.0 archives used occurrence IDs. Direct single-bucket scans use tree keys.
+        record = state.execute("""SELECT p.canonical_tree_sha256 FROM packages p JOIN repos r ON r.name=p.repo
+                                  WHERE p.source=? AND r.status='done'""", (source,)).fetchone()
+        return record[0] if record else "sha256:" + source
+    return None
+
+
+def record_origins(state, scratch, digest):
+    best = None
+    rows = state.execute("""SELECT p.source,p.skill_path,r.name,r.commit_sha,r.stars,r.spdx_license,
+                      (SELECT group_concat(tier) FROM repo_tiers WHERE repo=r.name) AS tiers
+                      FROM packages p JOIN repos r ON r.name=p.repo
+                      WHERE p.canonical_tree_sha256=? AND r.status='done' ORDER BY p.source""", (digest,))
+    for row in rows:
+        tiers = sorted(row["tiers"].split(","), key=TIERS.index)
+        source = row["source"]
+        origin = {"source": source, "repo_full_name": row["name"], "commit_sha": row["commit_sha"],
+                  "skill_path": row["skill_path"], "stars": row["stars"], "spdx_license": row["spdx_license"],
+                  "source_tier": tiers[0], "source_tiers": tiers}
+        scratch.execute("INSERT INTO origins VALUES(?,?,?)", (source, digest, dump(origin)))
+        candidate = (TIERS.index(tiers[0]), source)
+        if best is None or candidate < best:
+            best = candidate
+    if best is None:
+        raise ValueError(f"no eligible collector provenance for {digest}")
+    return best
+
+
+def check_coverage(state, scratch):
+    with closing(scratch.execute("SELECT digest FROM trees UNION SELECT digest FROM failed ORDER BY 1")) as covered, \
+            closing(state.execute("""SELECT DISTINCT p.canonical_tree_sha256 FROM packages p JOIN repos r
+                       ON r.name=p.repo WHERE r.status='done' ORDER BY p.canonical_tree_sha256""")) as expected:
+        current = covered.fetchone()
+        for (digest,) in expected:
+            while current is not None and current[0] < digest:
+                current = covered.fetchone()
+            if current is None or current[0] != digest:
+                raise ValueError(f"scan is missing collector tree {digest} ({tree_path(digest).as_posix()})")
 
 
 def ingest(scan, state, scratch, malformed, seed):
@@ -63,6 +96,7 @@ def ingest(scan, state, scratch, malformed, seed):
         CREATE TABLE trees (digest TEXT PRIMARY KEY, tier INTEGER NOT NULL, rating TEXT NOT NULL,
             rank TEXT NOT NULL, sample_key TEXT NOT NULL, source TEXT NOT NULL, report TEXT NOT NULL);
         CREATE INDEX sampling ON trees(rating,tier,sample_key,digest);
+        CREATE TABLE failed (digest TEXT PRIMARY KEY);
     """)
     errors = Counter()
     with scan.open(encoding="utf-8") as stream, scratch:
@@ -77,19 +111,26 @@ def ingest(scan, state, scratch, malformed, seed):
             if not row["complete"]:
                 malformed.write(dump(row) + "\n")
                 errors[error_type(row["error"])] += 1
+                digest = source_digest(state, row["source"])
+                if digest is not None:
+                    scratch.execute("INSERT OR IGNORE INTO failed VALUES(?)", (digest,))
                 continue
             digest, source = row["canonical_tree_sha256"], row["source"]
-            origin = origin_for(state, source, digest)
-            tier = TIERS.index(origin["source_tier"])
-            scratch.execute("INSERT OR IGNORE INTO origins VALUES(?,?,?)", (source, digest, dump(origin)))
+            if source_digest(state, source) != digest:
+                raise ValueError(f"tree hash differs from the pinned collector source on line {number}: {source!r}")
             report = dump(row)
-            # Worst observed grade wins. Tier, origin and report bytes break ties deterministically.
-            rank = f"{'FDCBA'.index(row['rating'])}{tier}:{source}:{hashlib.sha256(report.encode()).hexdigest()}"
-            sort_key = hashlib.sha256(f"{seed}\0{digest}".encode()).hexdigest()
-            scratch.execute("""INSERT INTO trees VALUES(?,?,?,?,?,?,?) ON CONFLICT(digest) DO UPDATE SET
-                tier=min(trees.tier, excluded.tier)""", (digest, tier, row["rating"], rank, sort_key, source, report))
-            scratch.execute("""UPDATE trees SET rating=?,rank=?,source=?,report=? WHERE digest=? AND rank>?""",
-                            (row["rating"], rank, source, report, digest, rank))
+            rank = f"{'FDCBA'.index(row['rating'])}:{source}:{hashlib.sha256(report.encode()).hexdigest()}"
+            existing = scratch.execute("SELECT rank FROM trees WHERE digest=?", (digest,)).fetchone()
+            if existing is None:
+                tier, representative = record_origins(state, scratch, digest)
+                sort_key = hashlib.sha256(f"{seed}\0{digest}".encode()).hexdigest()
+                scratch.execute("INSERT INTO trees VALUES(?,?,?,?,?,?,?)",
+                                (digest, tier, row["rating"], rank, sort_key, representative, report))
+            elif rank < existing["rank"]:
+                scratch.execute("UPDATE trees SET rating=?,rank=?,report=? WHERE digest=?",
+                                (row["rating"], rank, report, digest))
+        if state.execute("SELECT 1 FROM meta WHERE key='package_layout'").fetchone():
+            check_coverage(state, scratch)
     return errors
 
 
@@ -168,11 +209,17 @@ def dossier(tree, origin, files, selection):
 def write_queues(state, scratch, output, full, budget):
     with (output / OUTPUTS[1]).open("w", encoding="utf-8", newline="\n") as lineage:
         for tree in scratch.execute("SELECT digest,tier FROM trees ORDER BY digest"):
-            origins = [json.loads(r[0]) for r in scratch.execute(
-                "SELECT details FROM origins WHERE digest=? ORDER BY source", (tree["digest"],))]
-            lineage.write(dump({"canonical_tree_sha256": tree["digest"], "source_tier": TIERS[tree["tier"]],
-                                "occurrence_count": len(origins), "clone_count": len(origins) - 1,
-                                "origins": origins}) + "\n")
+            digest = tree["digest"]
+            count = scratch.execute("SELECT count(*) FROM origins WHERE digest=?", (digest,)).fetchone()[0]
+            header = {"canonical_tree_sha256": digest, "source_tier": TIERS[tree["tier"]],
+                      "occurrence_count": count, "clone_count": count - 1}
+            lineage.write(dump(header)[:-1] + ',"origins":[')
+            for index, (details,) in enumerate(scratch.execute(
+                    "SELECT details FROM origins WHERE digest=? ORDER BY source", (digest,))):
+                if index:
+                    lineage.write(",")
+                lineage.write(details)
+            lineage.write("]}\n")
 
     counts = {(r["rating"], r["tier"]): r["n"] for r in scratch.execute(
         "SELECT rating,tier,count(*) AS n FROM trees GROUP BY rating,tier")}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
-import hashlib
 import http.client
 import json
 import os
@@ -18,8 +17,9 @@ from zipfile import BadZipFile
 
 from collection_state import (TIERS, Checkpoints, add_repo, add_shard, canonicalize, initialize,
                               progress, save_snapshot)
+from corpus_layout import buckets
 from github_source import GitHub, repository_name
-from package_store import InvalidPackage, capture
+from package_store import BulkMirror, InvalidPackage, capture
 
 DEFAULT_MANIFEST = Path(__file__).with_name("sources_manifest.json")
 
@@ -91,11 +91,14 @@ def mark(db, name, status, reason):
         progress(db)
 
 
-def collect_repo(db, github, row, registry, output):
+def collect_repo(db, github, row, registry, output, wild_limit):
     name = row["name"]
     sha = row["commit_sha"]
+    trusted = db.execute("SELECT 1 FROM repo_tiers WHERE repo=? AND tier IN (?,?) LIMIT 1",
+                         (name, *TIERS[:2])).fetchone()
+    fork = row["is_fork"]
     try:
-        if sha is None:
+        if sha is None or fork is None:
             meta = github.json("/repos/" + name)
             if meta.get("private") is not False or meta.get("visibility", "public") != "public":
                 mark(db, name, "excluded", "repository is not public")
@@ -105,17 +108,35 @@ def collect_repo(db, github, row, registry, output):
                 with db:
                     canonicalize(db, name, canonical)
                 return
+            fork = meta.get("fork")
+            if not isinstance(fork, bool):
+                raise ValueError(f"repository metadata lacks a boolean fork flag for {name}")
+            with db:
+                db.execute("UPDATE repos SET name=?,is_fork=? WHERE name=?", (canonical, fork, name))
+            name = canonical
+        if not trusted and fork:
+            mark(db, name, "excluded_fork", "Tier 3 repository is a fork")
+            return
+        if sha is None:
             branch = quote(meta["default_branch"], safe="")
             sha = github.json(f"/repos/{name}/commits/{branch}")["sha"]
             if not re.fullmatch("[0-9a-f]{40}", sha):
                 raise ValueError(f"invalid pinned commit for {name}")
             with db:
-                db.execute("UPDATE repos SET name=?,commit_sha=?,stars=?,spdx_license=? WHERE name=?",
-                           (canonical, sha, meta["stargazers_count"], (meta.get("license") or {}).get("spdx_id"), name))
-            name = canonical
+                db.execute("UPDATE repos SET commit_sha=?,stars=?,spdx_license=? WHERE name=?",
+                           (sha, meta["stargazers_count"], (meta.get("license") or {}).get("spdx_id"), name))
+        if not trusted and row["skill_count"] is not None and row["skill_count"] > wild_limit:
+            raise BulkMirror(row["skill_count"])
         with github.archive(name, sha, output) as archive:
-            result = capture(archive, name, sha, registry, output)
+            result = capture(archive, name, sha, registry, output, None if trusted else wild_limit)
         save_snapshot(db, name, *result)
+    except BulkMirror as mirror:
+        with db:
+            db.execute("""INSERT OR REPLACE INTO bulk_mirrors(repo_full_name,commit_sha,stars,skill_count)
+                          SELECT name,commit_sha,stars,? FROM repos WHERE name=?""", (mirror.skill_count, name))
+            db.execute("UPDATE repos SET status='bulk_mirror',skill_count=?,reason=? WHERE name=?",
+                       (mirror.skill_count, str(mirror), name))
+            progress(db)
     except HTTPError as exc:
         if exc.code not in (404, 409, 410, 451):
             raise
@@ -132,9 +153,13 @@ def args_for(argv):
     parser.add_argument("--checkpoint-dir", type=Path, help="Publish an atomic latest.sqlite3 backup here.")
     parser.add_argument("--checkpoint-every", type=int, default=500,
                         help="Backup interval in committed search pages and package outcomes (default: 500).")
+    parser.add_argument("--max-skills-per-wild-repo", type=int, default=500, metavar="N",
+                        help="Quarantine a Tier 3-only repository above N skill roots (default: 500).")
     args = parser.parse_args(argv)
     if args.checkpoint_every < 1:
         parser.error("--checkpoint-every must be positive")
+    if args.max_skills_per_wild_repo < 0:
+        parser.error("--max-skills-per-wild-repo must be nonnegative")
     return args
 
 
@@ -142,7 +167,6 @@ def main(argv=None, *, github=None):
     args = args_for(argv)
     try:
         manifest = read_manifest(args.manifest)
-        fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
         registries = {entry["repo"].casefold(): entry for entry in manifest[TIERS[1]]}
         output = args.output_dir.resolve()
         packages = output / "packages"
@@ -151,11 +175,12 @@ def main(argv=None, *, github=None):
                 args.checkpoint_dir and args.checkpoint_dir.resolve().is_relative_to(packages)):
             raise ValueError("keep packages/, the state database and checkpoint storage separate")
         packages.mkdir(parents=True, exist_ok=True)
+        buckets(packages)
         state.parent.mkdir(parents=True, exist_ok=True)
         snapshots = Checkpoints(args.checkpoint_dir, args.checkpoint_every, state)
         github = github or GitHub(token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"))
         with closing(sqlite3.connect(state)) as db:
-            initialize(db, manifest, fingerprint, packages)
+            initialize(db, manifest, packages, args.max_skills_per_wild_repo)
             try:
                 while True:
                     repo = db.execute("SELECT * FROM repos WHERE status='pending' ORDER BY name LIMIT 1").fetchone()
@@ -166,7 +191,7 @@ def main(argv=None, *, github=None):
                                 if alias[0].casefold() in registries:
                                     catalog = registries[alias[0].casefold()]
                                     break
-                        collect_repo(db, github, repo, catalog or {}, output)
+                        collect_repo(db, github, repo, catalog or {}, output, args.max_skills_per_wild_repo)
                     else:
                         shard = db.execute("SELECT * FROM shards WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
                         if not shard:
@@ -177,7 +202,8 @@ def main(argv=None, *, github=None):
                 snapshots.save(db, final=True)
             partial = db.execute("SELECT count(*) FROM shards WHERE status='partial'").fetchone()[0]
             print(json.dumps({"repos": dict(db.execute("SELECT status,count(*) FROM repos GROUP BY status")),
-                              "packages": db.execute("SELECT count(*) FROM packages").fetchone()[0],
+                              "packages": db.execute("""SELECT count(*) FROM packages p JOIN repos r
+                                                       ON r.name=p.repo WHERE r.status='done'""").fetchone()[0],
                               "rejected_packages": db.execute("SELECT count(*) FROM rejections").fetchone()[0],
                               "partial_shards": partial}))
             return 2 if partial else 0

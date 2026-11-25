@@ -5,25 +5,31 @@ The scanner baseline is Git tag `v5.3.0`, commit `5a93240f3850d912582b0fd2d65603
 ```bash
 python -m pip install -r census/requirements.txt
 python census/collect_ecosystem.py --output-dir work/corpus --state-db work/state.sqlite3 \
-  --checkpoint-dir drive/checkpoints --checkpoint-every 500
-python scripts/scan.py --batch-dir work/corpus/packages --format jsonl --output work/scans.jsonl
+  --checkpoint-dir drive/checkpoints --checkpoint-every 500 --max-skills-per-wild-repo 500
+python census/scan_sharded_corpus.py --packages-dir work/corpus/packages \
+  --workers 4 --output work/scans.jsonl
 python census/build_audit_queue.py --scan-jsonl work/scans.jsonl --state-db work/state.sqlite3 \
   --output-dir work/audit --seed 20261124 --ab-sample-size 1500
 ```
 
-Set `GITHUB_TOKEN` or `GH_TOKEN` in the environment for GitHub Code Search. The scanner returns 1 for D/F findings or 2 for rejected inputs. A completed JSONL stream in either case can feed the queue builder.
+Set `GITHUB_TOKEN` or `GH_TOKEN` in the environment for GitHub Code Search. Finish the collection or checkpoint restore before scanning so the file tree and provenance database describe the same population.
 
 ## Acquisition
 
 | Collector argument | Meaning |
 | --- | --- |
 | `--manifest FILE` | Defaults to the adjacent `sources_manifest.json`. Tier 1 lists official repositories. Tier 2 lists registry repositories, explicit Markdown indexes and directories containing immediate Markdown catalog pages. The collector follows GitHub repository, tree and blob links from those pages. Tier 3 supplies code search templates, inclusive byte bounds and fallback directory qualifiers. |
-| `--output-dir DIR` | Required corpus root. Each accepted skill is a separate directory directly below `packages/`. Its opaque source ID binds the case-folded repository name, pinned commit and skill root. |
+| `--output-dir DIR` | Required corpus root. An exact file tree is stored once at `packages/<bucket>/<tree_key>/`. The key is the 64 lowercase hexadecimal digits of its canonical SHA-256, and the bucket is its first two digits (`00` through `ff`). |
 | `--state-db FILE` | Live SQLite discovery and provenance database. Defaults to `OUTPUT_DIR/state.sqlite3`. Reuse it with the same manifest to resume. |
 | `--checkpoint-dir DIR` | Optional durable destination for `latest.sqlite3`, written with the SQLite backup API and atomic replacement. |
 | `--checkpoint-every N` | Positive interval, default 500. Each committed search page counts once. Each repository transaction adds its package outcomes, or one for an empty/unavailable repository. Checkpoints occur after transactions and again on exit. |
+| `--max-skills-per-wild-repo N` | Nonnegative, default 500, inclusive. A Tier 3-only repository with more than N skill roots goes into `bulk_mirrors`. Resume a sharded run with its recorded cutoff. |
 
 A repository is downloaded as one commit-addressed ZIP. All `SKILL.md` directories are discovered, including skills absent from search results. Each file belongs to the closest skill root. The collector records the default-branch commit, observed star count, reported SPDX license (nullable), skill path, file inventory and all discovery tiers. Repeated discoveries add provenance without downloading a second copy. The effective tier is the highest-priority observed tier, with tier 1 first.
+
+Tier 3 searches use `fork:false`. The collector also checks the repository metadata and skips wild-only forks before requesting their archives. For other wild-only repositories it counts skill roots from the ZIP central directory, using the same directory exclusions as collection. Oversized repositories are classified before reading member contents or writing package files. The `bulk_mirrors` table stores `repo_full_name`, `commit_sha`, `stars` and `skill_count`. Tier 1 and Tier 2 repositories, including repositories discovered through registry indexes, are exempt from both wild filters.
+
+The `packages` table retains a row for each repository, pinned commit and skill path. Its `source` ID identifies that occurrence. The `canonical_tree_sha256` column links all identical trees to one directory. Extra or modified files, including mirror-injected `metadata.json`, change the canonical digest.
 
 Each package is limited to **10 MiB of combined uncompressed files**. Paths, member types, portable filename collisions and actual byte counts are checked before publication. Files are stored as ordinary data. Nested skills are separate packages and v5.3.0's VCS, cache and environment exclusions apply. The `rejections` table records per-package exclusions. Repository-level refusals and unavailable sources are recorded in `repos.status` and `repos.reason`.
 
@@ -33,12 +39,24 @@ The collector honors primary quota resets, `Retry-After` and secondary-limit bac
 
 After a Colab disconnect, copy `latest.sqlite3` to a separate live `--state-db` and rerun the same command. Keeping `--output-dir` on persistent storage also preserves the corpus. If the package directory was lost, the collector fetches the missing repositories at their **recorded commits**. Completed search pages survive restoration. Transient incomplete/short terminal pages are retried at the next invocation. A saturated one-byte shard retains its recorded coverage gap.
 
+**Recovering a flat corpus.** Copy the previous SQLite checkpoint to a new live database, use a fresh `--output-dir` and point `--checkpoint-dir` at a new backup directory. Use the updated manifest with the same source lists. On first open, the collector retains pinned commits and historical occurrences, supersedes the old `fork:true` query, and rechecks repository eligibility. A completed pinned snapshot already records the root count as accepted plus rejected roots. The collector can quarantine such a mirror without fetching the ZIP again. Eligible trees are restored into buckets. Historical occurrences of quarantined repositories stay in SQLite and are excluded from the active queue.
+
+## Sharded scan
+
+| Scanner driver argument | Meaning |
+| --- | --- |
+| `--packages-dir DIR` | Required collector `packages/` directory. The driver visits populated buckets in hexadecimal order. |
+| `--workers N` | Positive number of scanner workers per bucket, default 1. One bucket runs at a time. |
+| `--output FILE` | Required UTF-8 JSONL destination outside `packages/`. The driver publishes it after all buckets finish. |
+
+Each bucket is passed to `scripts/scan.py --batch-dir <bucket> --workers N --format jsonl`. Each JSONL source is relative to `packages/`, for example `ab/ab…`. Successful records use the same path for `target`. Exit 0 means the scan completed, 1 indicates D/F findings, and 2 indicates at least one malformed package. All three produce complete output streams. An operational failure exits 3 and preserves any earlier output.
+
 ## Audit queue
 
 | Queue argument | Meaning |
 | --- | --- |
-| `--scan-jsonl FILE` | Required v5.3.0 JSONL from a batch scan of `OUTPUT_DIR/packages`. |
-| `--state-db FILE` | Required collector database, opened read-only. Every successful row must match the recorded package source and canonical tree digest. |
+| `--scan-jsonl FILE` | Required v5.3.0 JSONL produced by the sharded scan. |
+| `--state-db FILE` | Required matching collector database, opened read-only. Each scanned tree joins to every eligible occurrence by canonical digest. A missing scan for a collected tree stops publication of the queue. |
 | `--output-dir DIR` | Required destination for the three JSONL files below. |
 | `--full-grades GRADES` | C, D and F always receive full review. Use `--full-grades B` to include B. Commas and spaces are accepted. |
 | `--seed N` | Default 20261124. Ranks trees deterministically by SHA-256 of the seed and tree digest within each stratum. |
@@ -56,4 +74,4 @@ The queue builder prints a JSON summary with malformed counts, unique trees, ful
 python -m unittest discover -s census/tests -p "test_*.py" -v
 ```
 
-The loopback service supplies GitHub metadata, pages and repository archives. The end-to-end test invokes `scripts/scan.py --batch-dir` and the queue CLI in subprocesses.
+The loopback service supplies GitHub metadata, pages and repository archives. The tests exercise all 256 bucket prefixes, identical trees across skill paths and tiers, the 500/501 boundary, and restoration of a flat-corpus checkpoint. The end-to-end test runs the sharded scan driver with the real `scripts/scan.py`, mixes valid trees and a corrupt archive, and checks the queue and provenance totals.
